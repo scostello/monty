@@ -10,7 +10,7 @@ use crate::types::{Builtins, Expr, ExprLoc, Function, Identifier, Kwarg, Node};
 
 /// TODO:
 /// * check variables exist before pre-assigning
-pub(crate) fn prepare(nodes: Vec<Node>, input_names: &[&str]) -> ParseResult<(Vec<Object>, Vec<Node>)> {
+pub(crate) fn prepare<'c>(nodes: Vec<Node<'c>>, input_names: &[&str]) -> ParseResult<'c, (Vec<Object>, Vec<Node<'c>>)> {
     let mut p = Prepare::new(nodes.len(), input_names, true);
     let new_nodes = p.prepare_nodes(nodes)?;
     Ok((p.namespace, new_nodes))
@@ -40,7 +40,7 @@ impl Prepare {
         }
     }
 
-    fn prepare_nodes(&mut self, nodes: Vec<Node>) -> ParseResult<Vec<Node>> {
+    fn prepare_nodes<'c>(&mut self, nodes: Vec<Node<'c>>) -> ParseResult<'c, Vec<Node<'c>>> {
         let nodes_len = nodes.len();
         let mut new_nodes = Vec::with_capacity(nodes_len);
         for (index, node) in nodes.into_iter().enumerate() {
@@ -94,7 +94,7 @@ impl Prepare {
                     let body = self.prepare_nodes(body)?;
                     let or_else = self.prepare_nodes(or_else)?;
                     if test.expr.is_const() {
-                        if test.expr.into_object().bool().map_err(ParseError::pre_eval)? {
+                        if test.expr.into_object().bool()? {
                             new_nodes.extend(body);
                         } else {
                             new_nodes.extend(or_else);
@@ -108,7 +108,7 @@ impl Prepare {
         Ok(new_nodes)
     }
 
-    fn prepare_expression(&mut self, loc_expr: ExprLoc) -> ParseResult<ExprLoc> {
+    fn prepare_expression<'c>(&mut self, loc_expr: ExprLoc<'c>) -> ParseResult<'c, ExprLoc<'c>> {
         let ExprLoc { position, expr } = loc_expr;
         let expr = match expr {
             Expr::Constant(object) => Expr::Constant(object),
@@ -158,7 +158,7 @@ impl Prepare {
                 position: position.clone(),
                 expr,
             };
-            let object = evaluate.evaluate(&tmp_expr_loc).map_err(ParseError::pre_eval)?;
+            let object = evaluate.evaluate(&tmp_expr_loc)?;
             Ok(ExprLoc {
                 position,
                 expr: Expr::Constant(object.into_owned()),
@@ -168,7 +168,7 @@ impl Prepare {
         }
     }
 
-    fn prepare_kwarg(&mut self, kwarg: Kwarg) -> ParseResult<Kwarg> {
+    fn prepare_kwarg<'c>(&mut self, kwarg: Kwarg<'c>) -> ParseResult<'c, Kwarg<'c>> {
         let Kwarg { key, value } = kwarg;
         let value = self.prepare_expression(value)?;
         // WARNING: we're not setting the id on key here, this needs doing when we implement kwargs

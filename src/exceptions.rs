@@ -41,7 +41,7 @@ impl Exception {
         }
     }
 
-    pub(crate) fn with_position(self, position: &CodeRange) -> ExceptionRaise {
+    pub(crate) fn with_position(self, position: CodeRange) -> ExceptionRaise {
         ExceptionRaise {
             exc: self,
             frame: Some(StackFrame::from_position(position)),
@@ -70,13 +70,13 @@ macro_rules! exc_err {
 pub(crate) use exc_err;
 
 #[derive(Debug, Clone)]
-pub struct ExceptionRaise {
+pub struct ExceptionRaise<'c> {
     pub(crate) exc: Exception,
     // first in vec is closes "bottom" frame
-    pub(crate) frame: Option<StackFrame>,
+    pub(crate) frame: Option<StackFrame<'c>>,
 }
 
-impl fmt::Display for ExceptionRaise {
+impl<'c> fmt::Display for ExceptionRaise<'c> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(ref frame) = self.frame {
             writeln!(f, "Traceback (most recent call last):")?;
@@ -86,41 +86,52 @@ impl fmt::Display for ExceptionRaise {
     }
 }
 
-impl From<Exception> for ExceptionRaise {
+impl<'c> From<Exception> for ExceptionRaise<'c> {
     fn from(exc: Exception) -> Self {
         ExceptionRaise { exc, frame: None }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct StackFrame {
-    pub(crate) position: CodeRange,
-    pub(crate) frame_name: Option<Cow<'static, str>>,
-    pub(crate) parent: Option<Box<StackFrame>>,
+impl<'c> ExceptionRaise<'c> {
+    pub(crate) fn summary(&self) -> String {
+        let exc = self.exc.str_with_type();
+        if let Some(ref frame) = self.frame {
+            format!("({}) {exc}", frame.position)
+        } else {
+            format!("(<no-tb>) {exc}")
+        }
+    }
 }
 
-impl fmt::Display for StackFrame {
+#[derive(Debug, Clone)]
+pub struct StackFrame<'c> {
+    pub(crate) position: CodeRange<'c>,
+    pub(crate) frame_name: Option<&'c str>,
+    pub(crate) parent: Option<Box<StackFrame<'c>>>,
+}
+
+impl<'c> fmt::Display for StackFrame<'c> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(ref parent) = self.parent {
             write!(f, "{}", parent)?;
         }
 
-        self.position.traceback(f, self.frame_name.as_ref())
+        self.position.traceback(f, self.frame_name)
     }
 }
 
-impl StackFrame {
-    pub(crate) fn new(position: &CodeRange, frame_name: &Cow<'static, str>, parent: &Option<StackFrame>) -> Self {
+impl<'c> StackFrame<'c> {
+    pub(crate) fn new(position: &CodeRange<'c>, frame_name: &'c str, parent: &Option<StackFrame<'c>>) -> Self {
         Self {
             position: position.clone(),
-            frame_name: Some(frame_name.clone()),
+            frame_name: Some(frame_name),
             parent: parent.clone().map(|s| Box::new(s)),
         }
     }
 
-    fn from_position(position: &CodeRange) -> Self {
+    fn from_position(position: CodeRange<'c>) -> Self {
         Self {
-            position: position.clone(),
+            position,
             frame_name: None,
             parent: None,
         }
@@ -149,12 +160,12 @@ impl fmt::Display for InternalRunError {
 }
 
 #[derive(Debug, Clone)]
-pub enum RunError {
+pub enum RunError<'c> {
     Internal(InternalRunError),
-    Exc(ExceptionRaise),
+    Exc(ExceptionRaise<'c>),
 }
 
-impl fmt::Display for RunError {
+impl<'c> fmt::Display for RunError<'c> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Internal(s) => write!(f, "{s}"),
@@ -163,19 +174,19 @@ impl fmt::Display for RunError {
     }
 }
 
-impl From<InternalRunError> for RunError {
+impl<'c> From<InternalRunError> for RunError<'c> {
     fn from(internal_error: InternalRunError) -> Self {
         Self::Internal(internal_error)
     }
 }
 
-impl From<ExceptionRaise> for RunError {
-    fn from(exc: ExceptionRaise) -> Self {
+impl<'c> From<ExceptionRaise<'c>> for RunError<'c> {
+    fn from(exc: ExceptionRaise<'c>) -> Self {
         Self::Exc(exc)
     }
 }
 
-impl From<Exception> for RunError {
+impl<'c> From<Exception> for RunError<'c> {
     fn from(exc: Exception) -> Self {
         Self::Exc(exc.into())
     }

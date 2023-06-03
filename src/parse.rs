@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::fmt;
 
 use num::ToPrimitive;
@@ -11,21 +10,21 @@ use crate::object::Object;
 use crate::parse_error::{ParseError, ParseResult};
 use crate::types::{CmpOperator, Expr, ExprLoc, Function, Identifier, Kwarg, Node, Operator};
 
-pub(crate) fn parse(code: &str, filename: &str) -> ParseResult<Vec<Node>> {
+pub(crate) fn parse<'c>(code: &'c str, filename: &'c str) -> ParseResult<'c, Vec<Node<'c>>> {
     match parse_program(code, filename) {
         Ok(ast) => Parser::new(code, filename).parse_statements(ast),
         Err(e) => Err(ParseError::Parsing(e.to_string())),
     }
 }
 
-pub(crate) struct Parser<'a> {
+pub(crate) struct Parser<'c> {
     line_ends: Vec<usize>,
-    code: &'a str,
-    filename: &'a str,
+    code: &'c str,
+    filename: &'c str,
 }
 
-impl<'a> Parser<'a> {
-    fn new(code: &'a str, filename: &'a str) -> Self {
+impl<'c> Parser<'c> {
+    fn new(code: &'c str, filename: &'c str) -> Self {
         // position of each line in the source code, to convert indexes to line number and column number
         let mut line_ends = vec![];
         for (i, c) in code.chars().enumerate() {
@@ -40,11 +39,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_statements(&self, statements: Vec<Stmt>) -> ParseResult<Vec<Node>> {
+    fn parse_statements(&self, statements: Vec<Stmt>) -> ParseResult<'c, Vec<Node<'c>>> {
         statements.into_iter().map(|f| self.parse_statement(f)).collect()
     }
 
-    fn parse_statement(&self, statement: Stmt) -> ParseResult<Node> {
+    fn parse_statement(&self, statement: Stmt) -> ParseResult<'c, Node<'c>> {
         match statement.node {
             StmtKind::FunctionDef {
                 name: _,
@@ -155,14 +154,14 @@ impl<'a> Parser<'a> {
     }
 
     /// `lhs = rhs` -> `lhs, rhs`
-    fn parse_assignment(&self, lhs: AstExpr, rhs: AstExpr) -> ParseResult<Node> {
+    fn parse_assignment(&self, lhs: AstExpr, rhs: AstExpr) -> ParseResult<'c, Node<'c>> {
         Ok(Node::Assign {
             target: self.parse_identifier(lhs)?,
             object: self.parse_expression(rhs)?,
         })
     }
 
-    fn parse_expression(&self, expression: AstExpr) -> ParseResult<ExprLoc> {
+    fn parse_expression(&self, expression: AstExpr) -> ParseResult<'c, ExprLoc<'c>> {
         let AstExpr { node, range, custom: _ } = expression;
         match node {
             ExprKind::BoolOp { op, values } => {
@@ -272,7 +271,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_kwargs(&self, kwarg: Keyword) -> ParseResult<Kwarg> {
+    fn parse_kwargs(&self, kwarg: Keyword) -> ParseResult<'c, Kwarg<'c>> {
         let key = match kwarg.node.arg {
             Some(key) => Identifier::from_name(key),
             None => return Err(ParseError::Todo("kwargs with no key")),
@@ -281,7 +280,7 @@ impl<'a> Parser<'a> {
         Ok(Kwarg { key, value })
     }
 
-    fn parse_identifier(&self, ast: AstExpr) -> ParseResult<Identifier> {
+    fn parse_identifier(&self, ast: AstExpr) -> ParseResult<'c, Identifier> {
         match ast.node {
             ExprKind::Name { id, .. } => Ok(Identifier::from_name(id)),
             _ => Err(ParseError::Internal(
@@ -290,29 +289,41 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn convert_range(&self, range: &TextRange) -> CodeRange {
+    fn convert_range(&self, range: &TextRange) -> CodeRange<'c> {
         let start = range.start().into();
+        let (start_line_no, start_line_start, start_line_end) = self.index_to_position(start);
+        let start = CodeLoc::new(start_line_no, start - start_line_start + 1);
+
         let end = range.end().into();
-        let (start, preview_line) = self.index_to_position(start);
-        let (end, _) = self.index_to_position(end);
+        let (end_line_no, end_line_start, _) = self.index_to_position(end);
+        let end = CodeLoc::new(end_line_no, end - end_line_start + 1);
+
+        let preview_line = if start_line_no == end_line_no {
+            if let Some(start_line_end) = start_line_end {
+                Some(&self.code[start_line_start..start_line_end])
+            } else {
+                Some(&self.code[start_line_start..])
+            }
+        } else {
+            None
+        };
+
         CodeRange::new(self.filename, start, end, preview_line)
     }
 
-    fn index_to_position(&self, index: usize) -> (CodeLoc, &str) {
-        let mut last = 0;
+    fn index_to_position(&self, index: usize) -> (usize, usize, Option<usize>) {
+        let mut line_start = 0;
         for (line_no, line_end) in self.line_ends.iter().enumerate() {
             if index <= *line_end {
-                let line = &self.code[last + 1..*line_end];
-                return (CodeLoc::new(line_no + 1, index - last), line);
+                return (line_no, line_start, Some(*line_end))
             }
-            last = *line_end;
+            line_start = *line_end + 1;
         }
-        let line = &self.code[last + 1..];
-        (CodeLoc::new(self.line_ends.len() + 1, index - last), line)
+        (self.line_ends.len() + 1, line_start, None)
     }
 }
 
-fn first<T: std::fmt::Debug>(v: Vec<T>) -> ParseResult<T> {
+fn first<T: fmt::Debug>(v: Vec<T>) -> ParseResult<'static, T> {
     if v.len() != 1 {
         Err(ParseError::Internal(
             format!("Expected 1 element, got {} (raw: {v:?})", v.len()).into(),
@@ -364,7 +375,7 @@ fn convert_compare_op(op: Cmpop) -> CmpOperator {
     }
 }
 
-fn convert_const(c: Constant) -> ParseResult<Object> {
+fn convert_const(c: Constant) -> ParseResult<'static, Object> {
     let v = match c {
         Constant::None => Object::None,
         Constant::Bool(b) => match b {
@@ -388,39 +399,35 @@ fn convert_const(c: Constant) -> ParseResult<Object> {
     Ok(v)
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct CodeRange {
-    filename: String,
-    preview_line: Option<String>,
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CodeRange<'c> {
+    filename: &'c str,
+    preview_line: Option<&'c str>,
     start: CodeLoc,
     end: CodeLoc,
 }
 
-impl fmt::Display for CodeRange {
+impl<'c> fmt::Display for CodeRange<'c> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?} to {:?}", self.start, self.end)
+        write!(f, "{} to {}", self.start, self.end)
     }
 }
 
-impl CodeRange {
-    fn new(filename: &str, start: CodeLoc, end: CodeLoc, preview_line: &str) -> Self {
+impl<'c> CodeRange<'c> {
+    fn new(filename: &'c str, start: CodeLoc, end: CodeLoc, preview_line: Option<&'c str>) -> Self {
         Self {
-            filename: filename.to_string(),
-            preview_line: if start.line == end.line {
-                Some(preview_line.to_string())
-            } else {
-                None
-            },
+            filename,
+            preview_line,
             start,
             end,
         }
     }
 
-    pub fn extend(&self, end: &CodeRange) -> Self {
+    pub fn extend(&self, end: &CodeRange<'c>) -> Self {
         Self {
-            filename: self.filename.clone(),
+            filename: self.filename,
             preview_line: if self.start.line == end.end.line {
-                self.preview_line.clone()
+                self.preview_line
             } else {
                 None
             },
@@ -429,7 +436,7 @@ impl CodeRange {
         }
     }
 
-    pub fn traceback(&self, f: &mut fmt::Formatter<'_>, frame_name: Option<&Cow<str>>) -> fmt::Result {
+    pub fn traceback(&self, f: &mut fmt::Formatter<'_>, frame_name: Option<&str>) -> fmt::Result {
         if let Some(frame_name) = frame_name {
             writeln!(
                 f,
@@ -458,6 +465,12 @@ impl CodeRange {
 struct CodeLoc {
     line: u32,
     column: u32,
+}
+
+impl fmt::Display for CodeLoc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{}", self.line, self.column)
+    }
 }
 
 impl CodeLoc {

@@ -17,13 +17,13 @@ pub use crate::types::Exit;
 use crate::types::Node;
 
 #[derive(Debug)]
-pub struct Executor {
+pub struct Executor<'c> {
     initial_namespace: Vec<Object>,
-    nodes: Vec<Node>,
+    nodes: Vec<Node<'c>>,
 }
 
-impl Executor {
-    pub fn new(code: &str, filename: &str, input_names: &[&str]) -> ParseResult<Self> {
+impl<'c> Executor<'c> {
+    pub fn new(code: &'c str, filename: &'c str, input_names: &[&str]) -> ParseResult<'c, Self> {
         let nodes = parse(code, filename)?;
         // dbg!(&nodes);
         let (initial_namespace, nodes) = prepare(nodes, input_names)?;
@@ -34,7 +34,7 @@ impl Executor {
         })
     }
 
-    pub fn run(&self, inputs: Vec<Object>) -> Result<Exit, InternalRunError> {
+    pub fn run(&self, inputs: Vec<Object>) -> Result<Exit<'c>, InternalRunError> {
         let mut namespace = self.initial_namespace.clone();
         for (i, input) in inputs.into_iter().enumerate() {
             namespace[i] = input;

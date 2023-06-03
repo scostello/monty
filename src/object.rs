@@ -140,7 +140,7 @@ impl Object {
         }
     }
 
-    pub fn bool(&self) -> RunResult<bool> {
+    pub fn bool(&self) -> RunResult<'static, bool> {
         match self {
             Self::Undefined => Err(InternalRunError::Undefined("".into()).into()),
             Self::Ellipsis => Ok(true),
@@ -187,7 +187,7 @@ impl Object {
         }
     }
 
-    pub fn as_int(&self) -> RunResult<i64> {
+    pub fn as_int(&self) -> RunResult<'static, i64> {
         match self {
             Self::Int(i) => Ok(*i),
             // TODO use self.type
