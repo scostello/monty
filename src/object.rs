@@ -353,8 +353,7 @@ impl Object {
     /// to generate accurate error messages.
     pub fn call_attr<'c>(&mut self, heap: &mut Heap, attr: &Attr, args: Vec<Self>) -> RunResult<'c, Object> {
         if let Self::Ref(id) = self {
-            let heap_data = heap.get_mut(*id);
-            heap_data.call_attr(heap, attr, args)
+            heap.call_attr(*id, attr, args)
         } else {
             Err(ExcType::attribute_error(self.type_str(heap), attr))
         }

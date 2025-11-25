@@ -145,6 +145,21 @@ impl Heap {
             .data
     }
 
+    /// Calls an attribute on the heap object at `id` while temporarily taking ownership
+    /// of its payload so we can borrow the heap again inside the call. This avoids the
+    /// borrow checker conflict that arises when attribute implementations also need
+    /// mutable access to the heap (e.g. for refcounting).
+    pub fn call_attr<'c>(&mut self, id: ObjectId, attr: &Attr, args: Vec<Object>) -> RunResult<'c, Object> {
+        let mut entry = {
+            let slot = self.objects.get_mut(id).expect("Heap::call_attr: slot missing");
+            slot.take().expect("Heap::call_attr: object already freed")
+        };
+        let result = entry.data.call_attr(self, attr, args);
+        let slot = self.objects.get_mut(id).expect("Heap::call_attr: slot missing");
+        *slot = Some(entry);
+        result
+    }
+
     /// Removes all objects and resets the ID counter, used between executor runs.
     pub fn clear(&mut self) {
         self.objects.clear();
