@@ -1,2 +1,2 @@
 (1, 2)
-# Return.is_ellipsis=false
+# Return=(1, 2)

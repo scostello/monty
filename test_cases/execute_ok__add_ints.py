@@ -1,2 +1,2 @@
 1 + 1
-# Return=int: 2
+# Return=2

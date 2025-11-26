@@ -1,2 +1,2 @@
 True is True
-# Return=bool: True
+# Return=True

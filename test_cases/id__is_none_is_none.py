@@ -1,2 +1,2 @@
 None is None
-# Return=bool: True
+# Return=True

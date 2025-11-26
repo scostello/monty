@@ -1,2 +1,2 @@
-# Return.str=0
 10 % 5
+# Return.str=0

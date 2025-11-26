@@ -1,2 +1,2 @@
 'a' + 'b'
-# Return=str: 'ab'
+# Return='ab'

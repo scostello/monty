@@ -1,2 +1,2 @@
-# Return.str=10
 10 + 0
+# Return.str=10

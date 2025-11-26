@@ -1,2 +1,2 @@
 42
-# Return.is_ellipsis=false
+# Return=42

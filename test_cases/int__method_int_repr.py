@@ -1,2 +1,2 @@
 42
-# Return.repr=42
+# Return=42

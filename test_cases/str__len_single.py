@@ -1,2 +1,2 @@
 len('a')
-# Return=int: 1
+# Return=1

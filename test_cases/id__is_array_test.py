@@ -1,2 +1,2 @@
 [] is []
-# Return=bool: False
+# Return=False

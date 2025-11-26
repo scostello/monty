@@ -1,2 +1,2 @@
-# Return.str=1
 len((1,))
+# Return.str=1

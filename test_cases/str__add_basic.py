@@ -1,2 +1,2 @@
 'hello' + ' ' + 'world'
-# Return=str: 'hello world'
+# Return='hello world'

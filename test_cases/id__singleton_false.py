@@ -1,2 +1,2 @@
 id(False) == id(False)
-# Return=bool: True
+# Return=True

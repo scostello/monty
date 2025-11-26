@@ -1,2 +1,2 @@
 True
-# Return.is_ellipsis=false
+# Return=True

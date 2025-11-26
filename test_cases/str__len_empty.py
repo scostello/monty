@@ -1,2 +1,2 @@
 len('')
-# Return=int: 0
+# Return=0

@@ -1,2 +1,2 @@
 'a' + 'b' + 'c' + 'd'
-# Return=str: 'abcd'
+# Return='abcd'

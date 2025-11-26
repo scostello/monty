@@ -1,2 +1,2 @@
-# Return.str=3
 1 + 2
+# Return.str=3

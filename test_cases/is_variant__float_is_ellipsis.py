@@ -1,2 +1,2 @@
 3.14
-# Return.is_ellipsis=false
+# Return=3.14

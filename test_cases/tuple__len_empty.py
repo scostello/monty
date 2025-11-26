@@ -1,2 +1,2 @@
-# Return=int: 0
 len(())
+# Return=0

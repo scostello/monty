@@ -1,2 +1,2 @@
-# Return.str=5
 len(b'hello')
+# Return.str=5

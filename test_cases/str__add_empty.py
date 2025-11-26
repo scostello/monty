@@ -1,2 +1,2 @@
 '' + 'test'
-# Return=str: 'test'
+# Return='test'

@@ -1,4 +1,4 @@
 s = 'hello'
 s += ' world'
 s
-# Return=str: 'hello world'
+# Return='hello world'

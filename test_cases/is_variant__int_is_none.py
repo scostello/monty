@@ -1,2 +1,2 @@
 42
-# Return.is_none=false
+# Return=42

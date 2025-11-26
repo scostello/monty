@@ -1,2 +1,2 @@
 id(...) == id(...)
-# Return=bool: True
+# Return=True

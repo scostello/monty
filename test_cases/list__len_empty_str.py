@@ -1,2 +1,2 @@
-# Return.str=0
 len([])
+# Return.str=0

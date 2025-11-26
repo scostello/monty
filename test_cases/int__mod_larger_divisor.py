@@ -1,2 +1,2 @@
-# Return=int: 3
 3 % 10
+# Return=3

@@ -1,2 +1,2 @@
-# Return.str=3
 3 % 10
+# Return.str=3
