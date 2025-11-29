@@ -32,5 +32,9 @@ lint: lint-rs lint-py ## Lint the code with ruff and clippy
 test:
 	cargo test
 
+.PHONY: complete-tests
+complete-tests: ## Fill in incomplete test expectations using CPython
+	uv run scripts/complete_tests.py
+
 .PHONY: all
 all: lint test

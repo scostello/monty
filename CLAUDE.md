@@ -74,12 +74,18 @@ Tests should always be as concise as possible while covering all possible cases.
 
 All Python execution behavior tests use file-based fixtures in `test_cases/`. File names: `<group_name>__<test_name>.py`.
 
+You should prefer single quotes for strings in python tests.
+
 **Expectation formats** (on last line of file):
 - `# Return=value` - Check `repr()` output
 - `# Return.str=value` - Check `str()` output
 - `# Return.type=typename` - Check `type()` output
 - `# Raise=Exception('message')` - Expect exception
 - `# ParseError=message` - Expect parse error
+
+Run `make lint-py` after adding tests to format them.
+
+Use make `make complete-tests` after adding tests with the expectations blank e.g. `# Return=` to fill in the expected value.
 
 These tests are run via `datatest-stable` harness in `tests/datatest_runner.rs`.
 
