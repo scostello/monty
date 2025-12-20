@@ -63,7 +63,7 @@ impl HeapData {
     ///
     /// This is called lazily when the value is first used as a dict key,
     /// avoiding unnecessary hash computation for values that are never used as keys.
-    fn compute_hash_if_immutable<T: ResourceTracker>(&self, heap: &mut Heap<T>, interns: &Interns) -> Option<u64> {
+    fn compute_hash_if_immutable(&self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> Option<u64> {
         match self {
             Self::Str(s) => {
                 let mut hasher = DefaultHasher::new();
@@ -103,7 +103,7 @@ impl HeapData {
 /// This provides efficient dispatch without boxing overhead by matching on
 /// the enum variant and delegating to the inner type's implementation.
 impl PyTrait for HeapData {
-    fn py_type<T: ResourceTracker>(&self, heap: Option<&Heap<T>>) -> &'static str {
+    fn py_type(&self, heap: Option<&Heap<impl ResourceTracker>>) -> &'static str {
         match self {
             Self::Str(s) => s.py_type(heap),
             Self::Bytes(b) => b.py_type(heap),
@@ -128,7 +128,7 @@ impl PyTrait for HeapData {
         }
     }
 
-    fn py_len<T: ResourceTracker>(&self, heap: &Heap<T>, interns: &Interns) -> Option<usize> {
+    fn py_len(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> Option<usize> {
         match self {
             Self::Str(s) => PyTrait::py_len(s, heap, interns),
             Self::Bytes(b) => PyTrait::py_len(b, heap, interns),
@@ -139,7 +139,7 @@ impl PyTrait for HeapData {
         }
     }
 
-    fn py_eq<T: ResourceTracker>(&self, other: &Self, heap: &mut Heap<T>, interns: &Interns) -> bool {
+    fn py_eq(&self, other: &Self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> bool {
         match (self, other) {
             (Self::Str(a), Self::Str(b)) => a.py_eq(b, heap, interns),
             (Self::Bytes(a), Self::Bytes(b)) => a.py_eq(b, heap, interns),
@@ -165,7 +165,7 @@ impl PyTrait for HeapData {
         }
     }
 
-    fn py_bool<T: ResourceTracker>(&self, heap: &Heap<T>, interns: &Interns) -> bool {
+    fn py_bool(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> bool {
         match self {
             Self::Str(s) => s.py_bool(heap, interns),
             Self::Bytes(b) => b.py_bool(heap, interns),
@@ -177,10 +177,10 @@ impl PyTrait for HeapData {
         }
     }
 
-    fn py_repr_fmt<W: Write, T: ResourceTracker>(
+    fn py_repr_fmt(
         &self,
-        f: &mut W,
-        heap: &Heap<T>,
+        f: &mut impl Write,
+        heap: &Heap<impl ResourceTracker>,
         heap_ids: &mut AHashSet<HeapId>,
         interns: &Interns,
     ) -> std::fmt::Result {
@@ -197,10 +197,10 @@ impl PyTrait for HeapData {
     }
     // py_str is always the same as py_repr which is the default impl
 
-    fn py_add<T: ResourceTracker>(
+    fn py_add(
         &self,
         other: &Self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> Result<Option<Value>, crate::resource::ResourceError> {
         match (self, other) {
@@ -214,10 +214,10 @@ impl PyTrait for HeapData {
         }
     }
 
-    fn py_sub<T: ResourceTracker>(
+    fn py_sub(
         &self,
         other: &Self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
     ) -> Result<Option<Value>, crate::resource::ResourceError> {
         match (self, other) {
             (Self::Str(a), Self::Str(b)) => a.py_sub(b, heap),
@@ -254,10 +254,10 @@ impl PyTrait for HeapData {
         }
     }
 
-    fn py_iadd<T: ResourceTracker>(
+    fn py_iadd(
         &mut self,
         other: Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         self_id: Option<HeapId>,
         interns: &Interns,
     ) -> Result<bool, crate::resource::ResourceError> {
@@ -271,9 +271,9 @@ impl PyTrait for HeapData {
         }
     }
 
-    fn py_call_attr<T: ResourceTracker>(
+    fn py_call_attr(
         &mut self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         attr: &Attr,
         args: ArgValues,
         interns: &Interns,
@@ -288,7 +288,7 @@ impl PyTrait for HeapData {
         }
     }
 
-    fn py_getitem<T: ResourceTracker>(&self, key: &Value, heap: &mut Heap<T>, interns: &Interns) -> RunResult<Value> {
+    fn py_getitem(&self, key: &Value, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> RunResult<Value> {
         match self {
             Self::Str(s) => s.py_getitem(key, heap, interns),
             Self::Bytes(b) => b.py_getitem(key, heap, interns),
@@ -299,11 +299,11 @@ impl PyTrait for HeapData {
         }
     }
 
-    fn py_setitem<T: ResourceTracker>(
+    fn py_setitem(
         &mut self,
         key: Value,
         value: Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> RunResult<()> {
         match self {

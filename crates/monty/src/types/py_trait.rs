@@ -38,7 +38,7 @@ pub trait PyTrait {
     ///
     /// Used for error messages and the `type()` builtin.
     /// Takes heap reference for cases where nested Value lookups are needed.
-    fn py_type<T: ResourceTracker>(&self, heap: Option<&Heap<T>>) -> &'static str;
+    fn py_type(&self, heap: Option<&Heap<impl ResourceTracker>>) -> &'static str;
 
     /// Returns the number of elements in this container.
     ///
@@ -46,7 +46,7 @@ pub trait PyTrait {
     /// Returns `None` if the type doesn't support `len()`.
     ///
     /// The `interns` parameter provides access to interned string content for InternString/InternBytes.
-    fn py_len<T: ResourceTracker>(&self, heap: &Heap<T>, interns: &Interns) -> Option<usize>;
+    fn py_len(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> Option<usize>;
 
     /// Python equality comparison (`==`).
     ///
@@ -55,7 +55,7 @@ pub trait PyTrait {
     /// computation for dict key lookups.
     ///
     /// The `interns` parameter provides access to interned string content.
-    fn py_eq<T: ResourceTracker>(&self, other: &Self, heap: &mut Heap<T>, interns: &Interns) -> bool;
+    fn py_eq(&self, other: &Self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> bool;
 
     /// Python comparison (`<`, `>`, etc.).
     ///
@@ -64,7 +64,7 @@ pub trait PyTrait {
     /// computation for dict key lookups.
     ///
     /// The `interns` parameter provides access to interned string content.
-    fn py_cmp<T: ResourceTracker>(&self, _other: &Self, _heap: &mut Heap<T>, _interns: &Interns) -> Option<Ordering> {
+    fn py_cmp(&self, _other: &Self, _heap: &mut Heap<impl ResourceTracker>, _interns: &Interns) -> Option<Ordering> {
         None
     }
 
@@ -83,7 +83,7 @@ pub trait PyTrait {
     /// Container types should typically report `false` when empty.
     ///
     /// The `interns` parameter provides access to interned string content.
-    fn py_bool<T: ResourceTracker>(&self, heap: &Heap<T>, interns: &Interns) -> bool {
+    fn py_bool(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> bool {
         self.py_len(heap, interns) != Some(0)
     }
 
@@ -98,10 +98,10 @@ pub trait PyTrait {
     /// * `heap` - The heap for resolving value references
     /// * `heap_ids` - Set of heap IDs currently being repr'd (for cycle detection)
     /// * `interns` - The interned strings table for looking up string/bytes literals
-    fn py_repr_fmt<W: Write, T: ResourceTracker>(
+    fn py_repr_fmt(
         &self,
-        f: &mut W,
-        heap: &Heap<T>,
+        f: &mut impl Write,
+        heap: &Heap<impl ResourceTracker>,
         heap_ids: &mut AHashSet<HeapId>,
         interns: &Interns,
     ) -> std::fmt::Result;
@@ -109,7 +109,7 @@ pub trait PyTrait {
     /// Returns the Python `repr()` string for this value.
     ///
     /// Convenience wrapper around `py_repr_fmt` that returns an owned string.
-    fn py_repr<T: ResourceTracker>(&self, heap: &Heap<T>, interns: &Interns) -> Cow<'static, str> {
+    fn py_repr(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> Cow<'static, str> {
         let mut s = String::new();
         let mut heap_ids = AHashSet::new();
         // Unwrap is safe: writing to String never fails
@@ -118,7 +118,7 @@ pub trait PyTrait {
     }
 
     /// Returns the Python `str()` string for this value.
-    fn py_str<T: ResourceTracker>(&self, heap: &Heap<T>, interns: &Interns) -> Cow<'static, str> {
+    fn py_str(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> Cow<'static, str> {
         self.py_repr(heap, interns)
     }
 
@@ -128,10 +128,10 @@ pub trait PyTrait {
     /// `Ok(Some(value))` on success, or `Err(ResourceError)` if allocation fails.
     ///
     /// The `interns` parameter provides access to interned string content for InternString/InternBytes.
-    fn py_add<T: ResourceTracker>(
+    fn py_add(
         &self,
         _other: &Self,
-        _heap: &mut Heap<T>,
+        _heap: &mut Heap<impl ResourceTracker>,
         _interns: &Interns,
     ) -> Result<Option<Value>, crate::resource::ResourceError> {
         Ok(None)
@@ -141,10 +141,10 @@ pub trait PyTrait {
     ///
     /// Returns `Ok(None)` if the operation is not supported for these types,
     /// `Ok(Some(value))` on success, or `Err(ResourceError)` if allocation fails.
-    fn py_sub<T: ResourceTracker>(
+    fn py_sub(
         &self,
         _other: &Self,
-        _heap: &mut Heap<T>,
+        _heap: &mut Heap<impl ResourceTracker>,
     ) -> Result<Option<Value>, crate::resource::ResourceError> {
         Ok(None)
     }
@@ -167,10 +167,10 @@ pub trait PyTrait {
     /// or `Err(ResourceError)` if allocation fails.
     ///
     /// The `interns` parameter provides access to interned string content for InternString/InternBytes.
-    fn py_iadd<T: ResourceTracker>(
+    fn py_iadd(
         &mut self,
         _other: Value,
-        _heap: &mut Heap<T>,
+        _heap: &mut Heap<impl ResourceTracker>,
         _self_id: Option<HeapId>,
         _interns: &Interns,
     ) -> Result<bool, crate::resource::ResourceError> {
@@ -182,10 +182,10 @@ pub trait PyTrait {
     /// Returns `Ok(None)` if the operation is not supported for these types.
     /// For numeric types: Int * Int, Float * Float, Int * Float, etc.
     /// For sequences: str * int, list * int for repetition.
-    fn py_mult<T: ResourceTracker>(
+    fn py_mult(
         &self,
         _other: &Self,
-        _heap: &mut Heap<T>,
+        _heap: &mut Heap<impl ResourceTracker>,
         _interns: &Interns,
     ) -> RunResult<Option<Value>> {
         Ok(None)
@@ -195,7 +195,7 @@ pub trait PyTrait {
     ///
     /// Always returns float for numeric types. Returns `Ok(None)` if not supported.
     /// Returns `Err(ZeroDivisionError)` for division by zero.
-    fn py_div<T: ResourceTracker>(&self, _other: &Self, _heap: &mut Heap<T>) -> RunResult<Option<Value>> {
+    fn py_div(&self, _other: &Self, _heap: &mut Heap<impl ResourceTracker>) -> RunResult<Option<Value>> {
         Ok(None)
     }
 
@@ -204,7 +204,7 @@ pub trait PyTrait {
     /// Returns int for int//int, float for float operations.
     /// Returns `Ok(None)` if not supported.
     /// Returns `Err(ZeroDivisionError)` for division by zero.
-    fn py_floordiv<T: ResourceTracker>(&self, _other: &Self, _heap: &mut Heap<T>) -> RunResult<Option<Value>> {
+    fn py_floordiv(&self, _other: &Self, _heap: &mut Heap<impl ResourceTracker>) -> RunResult<Option<Value>> {
         Ok(None)
     }
 
@@ -213,7 +213,7 @@ pub trait PyTrait {
     /// Int ** positive_int returns int, int ** negative_int returns float.
     /// Returns `Ok(None)` if not supported.
     /// Returns `Err(ZeroDivisionError)` for 0 ** negative.
-    fn py_pow<T: ResourceTracker>(&self, _other: &Self, _heap: &mut Heap<T>) -> RunResult<Option<Value>> {
+    fn py_pow(&self, _other: &Self, _heap: &mut Heap<impl ResourceTracker>) -> RunResult<Option<Value>> {
         Ok(None)
     }
 
@@ -221,9 +221,9 @@ pub trait PyTrait {
     ///
     /// Returns an error if the attribute doesn't exist or the arguments are invalid.
     /// Generic over ResourceTracker to work with any heap configuration.
-    fn py_call_attr<T: ResourceTracker>(
+    fn py_call_attr(
         &mut self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         attr: &Attr,
         _args: ArgValues,
         _interns: &Interns,
@@ -251,7 +251,7 @@ pub trait PyTrait {
     /// the returned value. The `interns` parameter provides access to interned string content.
     ///
     /// Default implementation returns TypeError.
-    fn py_getitem<T: ResourceTracker>(&self, _key: &Value, heap: &mut Heap<T>, _interns: &Interns) -> RunResult<Value> {
+    fn py_getitem(&self, _key: &Value, heap: &mut Heap<impl ResourceTracker>, _interns: &Interns) -> RunResult<Value> {
         Err(ExcType::type_error_not_sub(self.py_type(Some(heap))))
     }
 
@@ -263,11 +263,11 @@ pub trait PyTrait {
     /// The `interns` parameter provides access to interned string content.
     ///
     /// Default implementation returns TypeError.
-    fn py_setitem<T: ResourceTracker>(
+    fn py_setitem(
         &mut self,
         _key: Value,
         _value: Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         _interns: &Interns,
     ) -> RunResult<()> {
         Err(ExcType::TypeError).map_err(|e| {

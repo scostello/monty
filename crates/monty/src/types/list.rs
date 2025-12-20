@@ -68,7 +68,7 @@ impl List {
     /// incremented. This should be used instead of `.clone()` which would
     /// bypass reference counting.
     #[must_use]
-    pub fn clone_with_heap<T: ResourceTracker>(&self, heap: &mut Heap<T>) -> Self {
+    pub fn clone_with_heap(&self, heap: &mut Heap<impl ResourceTracker>) -> Self {
         let cloned: Vec<Value> = self.0.iter().map(|obj| obj.clone_with_heap(heap)).collect();
         Self(cloned)
     }
@@ -80,7 +80,7 @@ impl List {
     /// was already incremented (e.g., via `clone_with_heap` or `evaluate_use`).
     ///
     /// Returns `Value::None`, matching Python's behavior where `list.append()` returns None.
-    pub fn append<T: ResourceTracker>(&mut self, _heap: &mut Heap<T>, item: Value) {
+    pub fn append(&mut self, _heap: &mut Heap<impl ResourceTracker>, item: Value) {
         // Ownership transfer - refcount was already handled by caller
         self.0.push(item);
     }
@@ -96,7 +96,7 @@ impl List {
     ///   the item is appended to the end (matching Python semantics).
     ///
     /// Returns `Value::None`, matching Python's behavior where `list.insert()` returns None.
-    pub fn insert<T: ResourceTracker>(&mut self, _heap: &mut Heap<T>, index: usize, item: Value) {
+    pub fn insert(&mut self, _heap: &mut Heap<impl ResourceTracker>, index: usize, item: Value) {
         // Ownership transfer - refcount was already handled by caller
         // Python's insert() appends if index is out of bounds
         if index >= self.0.len() {
@@ -114,7 +114,7 @@ impl From<List> for Vec<Value> {
 }
 
 impl PyTrait for List {
-    fn py_type<T: ResourceTracker>(&self, _heap: Option<&Heap<T>>) -> &'static str {
+    fn py_type(&self, _heap: Option<&Heap<impl ResourceTracker>>) -> &'static str {
         "list"
     }
 
@@ -122,11 +122,11 @@ impl PyTrait for List {
         std::mem::size_of::<Self>() + self.0.len() * std::mem::size_of::<Value>()
     }
 
-    fn py_len<T: ResourceTracker>(&self, _heap: &Heap<T>, _interns: &Interns) -> Option<usize> {
+    fn py_len(&self, _heap: &Heap<impl ResourceTracker>, _interns: &Interns) -> Option<usize> {
         Some(self.0.len())
     }
 
-    fn py_getitem<T: ResourceTracker>(&self, key: &Value, heap: &mut Heap<T>, _interns: &Interns) -> RunResult<Value> {
+    fn py_getitem(&self, key: &Value, heap: &mut Heap<impl ResourceTracker>, _interns: &Interns) -> RunResult<Value> {
         // Extract integer index from key, returning TypeError if not an int
         let index = match key {
             Value::Int(i) => *i,
@@ -146,7 +146,7 @@ impl PyTrait for List {
         Ok(self.0[normalized_index as usize].clone_with_heap(heap))
     }
 
-    fn py_eq<T: ResourceTracker>(&self, other: &Self, heap: &mut Heap<T>, interns: &Interns) -> bool {
+    fn py_eq(&self, other: &Self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> bool {
         if self.0.len() != other.0.len() {
             return false;
         }
@@ -168,24 +168,24 @@ impl PyTrait for List {
         }
     }
 
-    fn py_bool<T: ResourceTracker>(&self, _heap: &Heap<T>, _interns: &Interns) -> bool {
+    fn py_bool(&self, _heap: &Heap<impl ResourceTracker>, _interns: &Interns) -> bool {
         !self.0.is_empty()
     }
 
-    fn py_repr_fmt<W: Write, T: ResourceTracker>(
+    fn py_repr_fmt(
         &self,
-        f: &mut W,
-        heap: &Heap<T>,
+        f: &mut impl Write,
+        heap: &Heap<impl ResourceTracker>,
         heap_ids: &mut AHashSet<HeapId>,
         interns: &Interns,
     ) -> std::fmt::Result {
         repr_sequence_fmt('[', ']', &self.0, f, heap, heap_ids, interns)
     }
 
-    fn py_add<T: ResourceTracker>(
+    fn py_add(
         &self,
         other: &Self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         _interns: &Interns,
     ) -> Result<Option<Value>, crate::resource::ResourceError> {
         // Clone both lists' contents with proper refcounting
@@ -196,10 +196,10 @@ impl PyTrait for List {
         Ok(Some(Value::Ref(id)))
     }
 
-    fn py_iadd<T: ResourceTracker>(
+    fn py_iadd(
         &mut self,
         other: Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         self_id: Option<HeapId>,
         _interns: &Interns,
     ) -> Result<bool, crate::resource::ResourceError> {
@@ -223,9 +223,9 @@ impl PyTrait for List {
         Ok(true)
     }
 
-    fn py_call_attr<T: ResourceTracker>(
+    fn py_call_attr(
         &mut self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         attr: &Attr,
         args: ArgValues,
         _interns: &Interns,
@@ -261,12 +261,12 @@ impl PyTrait for List {
 /// * `heap_ids` - Set of heap IDs being repr'd (for cycle detection)
 /// * `interns` - The interned strings table for looking up string/bytes literals
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn repr_sequence_fmt<W: Write, T: ResourceTracker>(
+pub(crate) fn repr_sequence_fmt(
     start: char,
     end: char,
     items: &[Value],
-    f: &mut W,
-    heap: &Heap<T>,
+    f: &mut impl Write,
+    heap: &Heap<impl ResourceTracker>,
     heap_ids: &mut AHashSet<HeapId>,
     interns: &Interns,
 ) -> std::fmt::Result {

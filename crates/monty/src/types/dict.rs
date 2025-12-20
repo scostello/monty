@@ -52,9 +52,9 @@ impl Dict {
     /// Assumes the caller is transferring ownership of all keys and values in the pairs.
     /// Does NOT increment reference counts since ownership is being transferred.
     /// Returns Err if any key is unhashable (e.g., list, dict).
-    pub fn from_pairs<T: ResourceTracker>(
+    pub fn from_pairs(
         pairs: Vec<(Value, Value)>,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> RunResult<Self> {
         let mut dict = Self::new();
@@ -76,11 +76,11 @@ impl Dict {
     ///
     /// Used when ownership is being transferred (e.g., from_pairs) rather than shared.
     /// The caller must ensure the values' refcounts already account for this dict's reference.
-    fn set_transfer_ownership<T: ResourceTracker>(
+    fn set_transfer_ownership(
         &mut self,
         key: Value,
         value: Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> RunResult<Option<Value>> {
         let Some(hash) = key.py_hash_u64(heap, interns) else {
@@ -109,7 +109,7 @@ impl Dict {
         Ok(None)
     }
 
-    fn drop_all_entries<T: ResourceTracker>(&mut self, heap: &mut Heap<T>) {
+    fn drop_all_entries(&mut self, heap: &mut Heap<impl ResourceTracker>) {
         for bucket in self.map.values_mut() {
             for (key, value) in bucket.drain(..) {
                 key.drop_with_heap(heap);
@@ -122,10 +122,10 @@ impl Dict {
     ///
     /// Returns Ok(Some(value)) if key exists, Ok(None) if key doesn't exist.
     /// Returns Err if key is unhashable.
-    pub fn get<T: ResourceTracker>(
+    pub fn get(
         &self,
         key: &Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> RunResult<Option<&Value>> {
         let hash = key
@@ -150,11 +150,11 @@ impl Dict {
     /// If the key already exists, replaces the old value and returns it (caller now
     /// owns the old value and is responsible for its refcount).
     /// Returns Err if key is unhashable.
-    pub fn set<T: ResourceTracker>(
+    pub fn set(
         &mut self,
         key: Value,
         value: Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> RunResult<Option<Value>> {
         let hash = key
@@ -188,10 +188,10 @@ impl Dict {
     ///
     /// Reference counting: does not decrement refcounts for removed key and value;
     /// caller assumes ownership and is responsible for managing their refcounts.
-    pub fn pop<T: ResourceTracker>(
+    pub fn pop(
         &mut self,
         key: &Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> RunResult<Option<(Value, Value)>> {
         let hash = key
@@ -218,7 +218,7 @@ impl Dict {
     /// Each key's reference count is incremented since the returned vector
     /// now holds additional references to these values.
     #[must_use]
-    pub fn keys<T: ResourceTracker>(&self, heap: &mut Heap<T>) -> Vec<Value> {
+    pub fn keys(&self, heap: &mut Heap<impl ResourceTracker>) -> Vec<Value> {
         let mut result = Vec::new();
         for bucket in self.map.values() {
             for (k, _v) in bucket {
@@ -233,7 +233,7 @@ impl Dict {
     /// Each value's reference count is incremented since the returned vector
     /// now holds additional references to these values.
     #[must_use]
-    pub fn values_list<T: ResourceTracker>(&self, heap: &mut Heap<T>) -> Vec<Value> {
+    pub fn values_list(&self, heap: &mut Heap<impl ResourceTracker>) -> Vec<Value> {
         let mut result = Vec::new();
         for bucket in self.map.values() {
             for (_k, v) in bucket {
@@ -248,7 +248,7 @@ impl Dict {
     /// Each key and value's reference count is incremented since the returned vector
     /// now holds additional references to these values.
     #[must_use]
-    pub fn items<T: ResourceTracker>(&self, heap: &mut Heap<T>) -> Vec<(Value, Value)> {
+    pub fn items(&self, heap: &mut Heap<impl ResourceTracker>) -> Vec<(Value, Value)> {
         let mut result = Vec::new();
         for bucket in self.map.values() {
             for (k, v) in bucket {
@@ -276,7 +276,7 @@ impl Dict {
     /// incremented. This should be used instead of `.clone()` which would
     /// bypass reference counting.
     #[must_use]
-    pub fn clone_with_heap<T: ResourceTracker>(&self, heap: &mut Heap<T>) -> Self {
+    pub fn clone_with_heap(&self, heap: &mut Heap<impl ResourceTracker>) -> Self {
         let mut new_map = IndexMap::new();
         for (hash, bucket) in &self.map {
             let new_bucket: Vec<(Value, Value)> = bucket
@@ -290,7 +290,7 @@ impl Dict {
 }
 
 impl PyTrait for Dict {
-    fn py_type<T: ResourceTracker>(&self, _heap: Option<&Heap<T>>) -> &'static str {
+    fn py_type(&self, _heap: Option<&Heap<impl ResourceTracker>>) -> &'static str {
         "dict"
     }
 
@@ -299,11 +299,11 @@ impl PyTrait for Dict {
         std::mem::size_of::<Self>() + self.len() * 2 * std::mem::size_of::<Value>()
     }
 
-    fn py_len<T: ResourceTracker>(&self, _heap: &Heap<T>, _interns: &Interns) -> Option<usize> {
+    fn py_len(&self, _heap: &Heap<impl ResourceTracker>, _interns: &Interns) -> Option<usize> {
         Some(self.len())
     }
 
-    fn py_eq<T: ResourceTracker>(&self, other: &Self, heap: &mut Heap<T>, interns: &Interns) -> bool {
+    fn py_eq(&self, other: &Self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> bool {
         if self.len() != other.len() {
             return false;
         }
@@ -341,14 +341,14 @@ impl PyTrait for Dict {
         }
     }
 
-    fn py_bool<T: ResourceTracker>(&self, _heap: &Heap<T>, _interns: &Interns) -> bool {
+    fn py_bool(&self, _heap: &Heap<impl ResourceTracker>, _interns: &Interns) -> bool {
         !self.is_empty()
     }
 
-    fn py_repr_fmt<W: Write, T: ResourceTracker>(
+    fn py_repr_fmt(
         &self,
-        f: &mut W,
-        heap: &Heap<T>,
+        f: &mut impl Write,
+        heap: &Heap<impl ResourceTracker>,
         heap_ids: &mut AHashSet<HeapId>,
         interns: &Interns,
     ) -> std::fmt::Result {
@@ -372,7 +372,7 @@ impl PyTrait for Dict {
         f.write_char('}')
     }
 
-    fn py_getitem<T: ResourceTracker>(&self, key: &Value, heap: &mut Heap<T>, interns: &Interns) -> RunResult<Value> {
+    fn py_getitem(&self, key: &Value, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> RunResult<Value> {
         // Use copy_for_extend to avoid borrow conflict, then increment refcount
         let result = self.get(key, heap, interns)?.map(Value::copy_for_extend);
         match result {
@@ -386,11 +386,11 @@ impl PyTrait for Dict {
         }
     }
 
-    fn py_setitem<T: ResourceTracker>(
+    fn py_setitem(
         &mut self,
         key: Value,
         value: Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> RunResult<()> {
         // Drop the old value if one was replaced
@@ -400,9 +400,9 @@ impl PyTrait for Dict {
         Ok(())
     }
 
-    fn py_call_attr<T: ResourceTracker>(
+    fn py_call_attr(
         &mut self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         attr: &Attr,
         args: ArgValues,
         interns: &Interns,

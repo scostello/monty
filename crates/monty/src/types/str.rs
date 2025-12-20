@@ -66,7 +66,7 @@ impl std::ops::Deref for Str {
 }
 
 impl PyTrait for Str {
-    fn py_type<T: ResourceTracker>(&self, _heap: Option<&Heap<T>>) -> &'static str {
+    fn py_type(&self, _heap: Option<&Heap<impl ResourceTracker>>) -> &'static str {
         "str"
     }
 
@@ -74,12 +74,12 @@ impl PyTrait for Str {
         std::mem::size_of::<Self>() + self.0.len()
     }
 
-    fn py_len<T: ResourceTracker>(&self, _heap: &Heap<T>, _interns: &Interns) -> Option<usize> {
+    fn py_len(&self, _heap: &Heap<impl ResourceTracker>, _interns: &Interns) -> Option<usize> {
         // Count Unicode characters, not bytes, to match Python semantics
         Some(self.0.chars().count())
     }
 
-    fn py_eq<T: ResourceTracker>(&self, other: &Self, _heap: &mut Heap<T>, _interns: &Interns) -> bool {
+    fn py_eq(&self, other: &Self, _heap: &mut Heap<impl ResourceTracker>, _interns: &Interns) -> bool {
         self.0 == other.0
     }
 
@@ -88,28 +88,28 @@ impl PyTrait for Str {
         // No-op: strings don't hold Value references
     }
 
-    fn py_bool<T: ResourceTracker>(&self, _heap: &Heap<T>, _interns: &Interns) -> bool {
+    fn py_bool(&self, _heap: &Heap<impl ResourceTracker>, _interns: &Interns) -> bool {
         !self.0.is_empty()
     }
 
-    fn py_repr_fmt<W: Write, T: ResourceTracker>(
+    fn py_repr_fmt(
         &self,
-        f: &mut W,
-        _heap: &Heap<T>,
+        f: &mut impl Write,
+        _heap: &Heap<impl ResourceTracker>,
         _heap_ids: &mut AHashSet<HeapId>,
         _interns: &Interns,
     ) -> std::fmt::Result {
         string_repr_fmt(&self.0, f)
     }
 
-    fn py_str<T: ResourceTracker>(&self, _heap: &Heap<T>, _interns: &Interns) -> Cow<'static, str> {
+    fn py_str(&self, _heap: &Heap<impl ResourceTracker>, _interns: &Interns) -> Cow<'static, str> {
         self.0.clone().into()
     }
 
-    fn py_add<T: ResourceTracker>(
+    fn py_add(
         &self,
         other: &Self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         _interns: &Interns,
     ) -> Result<Option<Value>, crate::resource::ResourceError> {
         let result = format!("{}{}", self.0, other.0);
@@ -117,10 +117,10 @@ impl PyTrait for Str {
         Ok(Some(Value::Ref(id)))
     }
 
-    fn py_iadd<T: ResourceTracker>(
+    fn py_iadd(
         &mut self,
         other: Value,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         self_id: Option<HeapId>,
         interns: &Interns,
     ) -> Result<bool, crate::resource::ResourceError> {
@@ -154,7 +154,7 @@ impl PyTrait for Str {
 /// - Uses single quotes by default, escaping any contained single quotes
 ///
 /// Common escape sequences (backslash, newline, tab, carriage return) are always escaped.
-pub fn string_repr_fmt<W: Write>(s: &str, f: &mut W) -> std::fmt::Result {
+pub fn string_repr_fmt(s: &str, f: &mut impl Write) -> std::fmt::Result {
     // Check if the string contains single quotes but not double quotes
     if s.contains('\'') && !s.contains('"') {
         // Use double quotes if string contains only single quotes
@@ -170,7 +170,7 @@ pub fn string_repr_fmt<W: Write>(s: &str, f: &mut W) -> std::fmt::Result {
 }
 
 /// Writes the string with common escape sequences replaced.
-fn write_escaped_string<W: Write>(s: &str, f: &mut W) -> std::fmt::Result {
+fn write_escaped_string(s: &str, f: &mut impl Write) -> std::fmt::Result {
     for c in s.chars() {
         match c {
             '\\' => f.write_str("\\\\")?,
@@ -184,7 +184,7 @@ fn write_escaped_string<W: Write>(s: &str, f: &mut W) -> std::fmt::Result {
 }
 
 /// Writes the string with common escape sequences replaced, plus single quotes escaped.
-fn write_escaped_string_with_single_quote<W: Write>(s: &str, f: &mut W) -> std::fmt::Result {
+fn write_escaped_string_with_single_quote(s: &str, f: &mut impl Write) -> std::fmt::Result {
     for c in s.chars() {
         match c {
             '\\' => f.write_str("\\\\")?,

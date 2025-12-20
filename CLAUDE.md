@@ -38,7 +38,7 @@ When writing exception messages, always check `src/exceptions.rs` for existing m
 
 Avoid local imports, unless there's a very good reason, all imports should be at the top of the file.
 
-Avoid `fn my_func<T: MyTrait>(..., param: T)` style function definitions, STRONGLY prefer `fn my_func(param: impl MyTrait)` syntax since changes are more localized.
+Avoid `fn my_func<T: MyTrait>(..., param: T)` style function definitions, STRONGLY prefer `fn my_func(param: impl MyTrait)` syntax since changes are more localized. This includes in trait definitions and implementations.
 
 ### Docstrings and comments.
 

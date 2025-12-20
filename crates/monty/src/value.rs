@@ -85,7 +85,7 @@ impl From<bool> for Value {
 }
 
 impl PyTrait for Value {
-    fn py_type<T: ResourceTracker>(&self, heap: Option<&Heap<T>>) -> &'static str {
+    fn py_type(&self, heap: Option<&Heap<impl ResourceTracker>>) -> &'static str {
         match self {
             Self::Undefined => "undefined",
             Self::Ellipsis => "ellipsis",
@@ -117,7 +117,7 @@ impl PyTrait for Value {
         0
     }
 
-    fn py_len<T: ResourceTracker>(&self, heap: &Heap<T>, interns: &Interns) -> Option<usize> {
+    fn py_len(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> Option<usize> {
         match self {
             // Count Unicode characters, not bytes, to match Python semantics
             Self::InternString(string_id) => Some(interns.get_str(*string_id).chars().count()),
@@ -127,7 +127,7 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_eq<T: ResourceTracker>(&self, other: &Self, heap: &mut Heap<T>, interns: &Interns) -> bool {
+    fn py_eq(&self, other: &Self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> bool {
         match (self, other) {
             (Self::Undefined, _) => false,
             (_, Self::Undefined) => false,
@@ -199,7 +199,7 @@ impl PyTrait for Value {
     }
 
     #[allow(clippy::only_used_in_recursion)]
-    fn py_cmp<T: ResourceTracker>(&self, other: &Self, heap: &mut Heap<T>, interns: &Interns) -> Option<Ordering> {
+    fn py_cmp(&self, other: &Self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> Option<Ordering> {
         match (self, other) {
             (Self::Int(s), Self::Int(o)) => s.partial_cmp(o),
             (Self::Float(s), Self::Float(o)) => s.partial_cmp(o),
@@ -226,7 +226,7 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_bool<T: ResourceTracker>(&self, heap: &Heap<T>, interns: &Interns) -> bool {
+    fn py_bool(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> bool {
         match self {
             Self::Undefined => false,
             Self::Ellipsis => true,
@@ -246,10 +246,10 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_repr_fmt<W: Write, T: ResourceTracker>(
+    fn py_repr_fmt(
         &self,
-        f: &mut W,
-        heap: &Heap<T>,
+        f: &mut impl Write,
+        heap: &Heap<impl ResourceTracker>,
         heap_ids: &mut AHashSet<HeapId>,
         interns: &Interns,
     ) -> std::fmt::Result {
@@ -299,7 +299,7 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_str<T: ResourceTracker>(&self, heap: &Heap<T>, interns: &Interns) -> Cow<'static, str> {
+    fn py_str(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> Cow<'static, str> {
         match self {
             Self::InternString(string_id) => interns.get_str(*string_id).to_owned().into(),
             Self::Ref(id) => heap.get(*id).py_str(heap, interns),
@@ -307,10 +307,10 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_add<T: ResourceTracker>(
+    fn py_add(
         &self,
         other: &Self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> Result<Option<Value>, crate::resource::ResourceError> {
         match (self, other) {
@@ -375,10 +375,10 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_sub<T: ResourceTracker>(
+    fn py_sub(
         &self,
         other: &Self,
-        _heap: &mut Heap<T>,
+        _heap: &mut Heap<impl ResourceTracker>,
     ) -> Result<Option<Self>, crate::resource::ResourceError> {
         match (self, other) {
             (Self::Int(v1), Self::Int(v2)) => Ok(Some(Value::Int(v1 - v2))),
@@ -406,10 +406,10 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_iadd<T: ResourceTracker>(
+    fn py_iadd(
         &mut self,
         other: Self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         _self_id: Option<HeapId>,
         interns: &Interns,
     ) -> Result<bool, crate::resource::ResourceError> {
@@ -481,10 +481,10 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_mult<T: ResourceTracker>(
+    fn py_mult(
         &self,
         other: &Self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
     ) -> RunResult<Option<Value>> {
         match (self, other) {
@@ -546,7 +546,7 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_div<T: ResourceTracker>(&self, other: &Self, _heap: &mut Heap<T>) -> RunResult<Option<Value>> {
+    fn py_div(&self, other: &Self, _heap: &mut Heap<impl ResourceTracker>) -> RunResult<Option<Value>> {
         match (self, other) {
             // True division always returns float
             // Note: int/int uses "division by zero", float cases use "float division by zero"
@@ -618,7 +618,7 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_floordiv<T: ResourceTracker>(&self, other: &Self, _heap: &mut Heap<T>) -> RunResult<Option<Value>> {
+    fn py_floordiv(&self, other: &Self, _heap: &mut Heap<impl ResourceTracker>) -> RunResult<Option<Value>> {
         match (self, other) {
             // Floor division: int // int returns int
             (Self::Int(a), Self::Int(b)) => {
@@ -701,7 +701,7 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_pow<T: ResourceTracker>(&self, other: &Self, _heap: &mut Heap<T>) -> RunResult<Option<Value>> {
+    fn py_pow(&self, other: &Self, _heap: &mut Heap<impl ResourceTracker>) -> RunResult<Option<Value>> {
         match (self, other) {
             (Self::Int(base), Self::Int(exp)) => {
                 if *base == 0 && *exp < 0 {
@@ -814,7 +814,7 @@ impl PyTrait for Value {
         }
     }
 
-    fn py_getitem<T: ResourceTracker>(&self, key: &Self, heap: &mut Heap<T>, interns: &Interns) -> RunResult<Self> {
+    fn py_getitem(&self, key: &Self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> RunResult<Self> {
         match self {
             Value::Ref(id) => {
                 // Need to take entry out to allow mutable heap access
@@ -887,7 +887,7 @@ impl Value {
     ///
     /// The `interns` parameter is needed for InternString/InternBytes to look up
     /// their actual content and hash it consistently with equivalent heap Str/Bytes.
-    pub fn py_hash_u64<T: ResourceTracker>(&self, heap: &mut Heap<T>, interns: &Interns) -> Option<u64> {
+    pub fn py_hash_u64(&self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> Option<u64> {
         match self {
             // Immediate values can be hashed directly
             Self::Undefined => Some(0),
@@ -977,9 +977,9 @@ impl Value {
     ///
     /// This method requires heap access to work with heap-allocated values and
     /// to generate accurate error messages.
-    pub fn call_attr<T: ResourceTracker>(
+    pub fn call_attr(
         &mut self,
-        heap: &mut Heap<T>,
+        heap: &mut Heap<impl ResourceTracker>,
         attr: &Attr,
         args: ArgValues,
         interns: &Interns,
@@ -1002,7 +1002,7 @@ impl Value {
     /// proper reference counting. Using `.clone()` directly will bypass reference counting
     /// and cause memory leaks or double-frees.
     #[must_use]
-    pub fn clone_with_heap<T: ResourceTracker>(&self, heap: &mut Heap<T>) -> Self {
+    pub fn clone_with_heap(&self, heap: &mut Heap<impl ResourceTracker>) -> Self {
         match self {
             Self::Ref(id) => {
                 heap.inc_ref(*id);
@@ -1028,7 +1028,7 @@ impl Value {
     /// the original is forgotten to prevent the Drop impl from panicking. Non-Ref variants
     /// are left unchanged since they don't trigger the Drop panic.
     #[allow(unused_mut)]
-    pub fn drop_with_heap<T: ResourceTracker>(mut self, heap: &mut Heap<T>) {
+    pub fn drop_with_heap(mut self, heap: &mut Heap<impl ResourceTracker>) {
         #[cfg(feature = "dec-ref-check")]
         {
             let old = std::mem::replace(&mut self, Value::Dereferenced);

@@ -63,7 +63,7 @@ impl std::ops::Deref for Bytes {
 }
 
 impl PyTrait for Bytes {
-    fn py_type<T: ResourceTracker>(&self, _heap: Option<&Heap<T>>) -> &'static str {
+    fn py_type(&self, _heap: Option<&Heap<impl ResourceTracker>>) -> &'static str {
         "bytes"
     }
 
@@ -71,11 +71,11 @@ impl PyTrait for Bytes {
         std::mem::size_of::<Self>() + self.0.len()
     }
 
-    fn py_len<T: ResourceTracker>(&self, _heap: &Heap<T>, _interns: &Interns) -> Option<usize> {
+    fn py_len(&self, _heap: &Heap<impl ResourceTracker>, _interns: &Interns) -> Option<usize> {
         Some(self.0.len())
     }
 
-    fn py_eq<T: ResourceTracker>(&self, other: &Self, _heap: &mut Heap<T>, _interns: &Interns) -> bool {
+    fn py_eq(&self, other: &Self, _heap: &mut Heap<impl ResourceTracker>, _interns: &Interns) -> bool {
         self.0 == other.0
     }
 
@@ -84,14 +84,14 @@ impl PyTrait for Bytes {
         // No-op: bytes don't hold Value references
     }
 
-    fn py_bool<T: ResourceTracker>(&self, _heap: &Heap<T>, _interns: &Interns) -> bool {
+    fn py_bool(&self, _heap: &Heap<impl ResourceTracker>, _interns: &Interns) -> bool {
         !self.0.is_empty()
     }
 
-    fn py_repr_fmt<W: Write, T: ResourceTracker>(
+    fn py_repr_fmt(
         &self,
-        f: &mut W,
-        _heap: &Heap<T>,
+        f: &mut impl Write,
+        _heap: &Heap<impl ResourceTracker>,
         _heap_ids: &mut AHashSet<HeapId>,
         _interns: &Interns,
     ) -> std::fmt::Result {
@@ -106,7 +106,7 @@ impl PyTrait for Bytes {
 /// - Uses single quotes by default
 /// - Switches to double quotes if bytes contain `'` but not `"`
 /// - Escapes: `\\`, `\t`, `\n`, `\r`, `\xNN` for non-printable bytes
-pub fn bytes_repr_fmt<W: Write>(bytes: &[u8], f: &mut W) -> std::fmt::Result {
+pub fn bytes_repr_fmt(bytes: &[u8], f: &mut impl Write) -> std::fmt::Result {
     // Determine quote character: use double quotes if single quote present but not double
     let has_single = bytes.contains(&b'\'');
     let has_double = bytes.contains(&b'"');
