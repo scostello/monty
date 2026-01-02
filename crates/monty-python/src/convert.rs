@@ -1,17 +1,17 @@
-//! Type conversion between Monty's `PyObject` and PyO3 Python objects.
+//! Type conversion between Monty's `MontyObject` and PyO3 Python objects.
 //!
 //! This module provides bidirectional conversion:
-//! - `py_to_monty`: Convert Python objects to Monty's `PyObject` for input
-//! - `monty_to_py`: Convert Monty's `PyObject` back to Python objects for output
+//! - `py_to_monty`: Convert Python objects to Monty's `MontyObject` for input
+//! - `monty_to_py`: Convert Monty's `MontyObject` back to Python objects for output
 
-use ::monty::PyObject as MontyObject;
+use ::monty::MontyObject;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PySet, PyString, PyTuple};
 
 use crate::exceptions::{create_py_exception, exc_to_monty_object};
 
-/// Converts a Python object to Monty's `PyObject` representation.
+/// Converts a Python object to Monty's `MontyObject` representation.
 ///
 /// Handles all standard Python types that Monty supports as inputs.
 /// Unsupported types will raise a `TypeError`.
@@ -39,7 +39,7 @@ pub fn py_to_monty(obj: &Bound<'_, PyAny>) -> PyResult<MontyObject> {
         let items: PyResult<Vec<MontyObject>> = tuple.iter().map(|item| py_to_monty(&item)).collect();
         Ok(MontyObject::Tuple(items?))
     } else if let Ok(dict) = obj.cast::<PyDict>() {
-        // in theory we could provide a way of passing the iterator direct to the internal PyObject construct
+        // in theory we could provide a way of passing the iterator direct to the internal MontyObject construct
         // it's probably not worth it right now
         Ok(MontyObject::dict(
             dict.iter()
@@ -64,25 +64,25 @@ pub fn py_to_monty(obj: &Bound<'_, PyAny>) -> PyResult<MontyObject> {
     }
 }
 
-/// Converts Monty's `PyObject` to a native Python object.
+/// Converts Monty's `MontyObject` to a native Python object.
 ///
 /// All Monty values can be converted to Python, including output-only
 /// types like `Repr` which become strings.
-pub fn monty_to_py(py: Python<'_>, obj: MontyObject) -> PyResult<Py<PyAny>> {
+pub fn monty_to_py(py: Python<'_>, obj: &MontyObject) -> PyResult<Py<PyAny>> {
     match obj {
         MontyObject::None => Ok(py.None()),
         MontyObject::Ellipsis => Ok(py.Ellipsis()),
-        MontyObject::Bool(b) => Ok(PyBool::new(py, b).to_owned().into_any().unbind()),
+        MontyObject::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any().unbind()),
         MontyObject::Int(i) => Ok(i.into_pyobject(py)?.clone().into_any().unbind()),
         MontyObject::Float(f) => Ok(f.into_pyobject(py)?.clone().into_any().unbind()),
-        MontyObject::String(s) => Ok(PyString::new(py, &s).into_any().unbind()),
-        MontyObject::Bytes(b) => Ok(PyBytes::new(py, &b).into_any().unbind()),
+        MontyObject::String(s) => Ok(PyString::new(py, s).into_any().unbind()),
+        MontyObject::Bytes(b) => Ok(PyBytes::new(py, b).into_any().unbind()),
         MontyObject::List(items) => {
-            let py_items: PyResult<Vec<Py<PyAny>>> = items.into_iter().map(|item| monty_to_py(py, item)).collect();
+            let py_items: PyResult<Vec<Py<PyAny>>> = items.iter().map(|item| monty_to_py(py, item)).collect();
             Ok(PyList::new(py, py_items?)?.into_any().unbind())
         }
         MontyObject::Tuple(items) => {
-            let py_items: PyResult<Vec<Py<PyAny>>> = items.into_iter().map(|item| monty_to_py(py, item)).collect();
+            let py_items: PyResult<Vec<Py<PyAny>>> = items.iter().map(|item| monty_to_py(py, item)).collect();
             Ok(PyTuple::new(py, py_items?)?.into_any().unbind())
         }
         MontyObject::Dict(map) => {
@@ -100,22 +100,22 @@ pub fn monty_to_py(py: Python<'_>, obj: MontyObject) -> PyResult<Py<PyAny>> {
             Ok(set.into_any().unbind())
         }
         MontyObject::FrozenSet(items) => {
-            let py_items: PyResult<Vec<Py<PyAny>>> = items.into_iter().map(|item| monty_to_py(py, item)).collect();
+            let py_items: PyResult<Vec<Py<PyAny>>> = items.iter().map(|item| monty_to_py(py, item)).collect();
             Ok(PyFrozenSet::new(py, &py_items?)?.into_any().unbind())
         }
         // Return the exception instance as a value (not raised)
         MontyObject::Exception { exc_type, arg } => {
-            let exc = create_py_exception(exc_type, arg);
+            let exc = create_py_exception(*exc_type, arg.clone());
             Ok(exc.into_value(py).into_any())
         }
         MontyObject::Type(t) => {
             // Return Python's built-in type object
-            let type_name: &str = (&t).into();
+            let type_name: &str = t.into();
             let builtins = py.import("builtins")?;
             Ok(builtins.getattr(type_name)?.unbind())
         }
         // Output-only types - convert to string representation
-        MontyObject::Repr(s) => Ok(PyString::new(py, &s).into_any().unbind()),
+        MontyObject::Repr(s) => Ok(PyString::new(py, s).into_any().unbind()),
         MontyObject::Cycle(_, placeholder) => Ok(PyString::new(py, placeholder).into_any().unbind()),
     }
 }

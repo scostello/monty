@@ -1,7 +1,5 @@
 """Example usage of the Monty Python bindings."""
 
-from typing import Any
-
 import monty
 
 # Basic execution - simple expression
@@ -24,8 +22,7 @@ print(f'With limits: {m.run(inputs={"x": 2, "y": 3, "z": 4}, limits=limits)}')  
 m = monty.Monty('fetch("https://example.com")', external_functions=['fetch'])
 
 
-def fetch(*args: Any, **kwargs: Any) -> str:
-    url = args[0] if args else kwargs.get('url')
+def fetch(url: str) -> str:
     return f'Fetched: {url}'
 
 

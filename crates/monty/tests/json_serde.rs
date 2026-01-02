@@ -1,44 +1,44 @@
-//! Tests for JSON serialization and deserialization of `PyObject`.
+//! Tests for JSON serialization and deserialization of `MontyObject`.
 //!
 //! JSON mapping:
 //! - Bidirectional: null↔None, bool↔Bool, int↔Int, float↔Float, string↔String, array↔List, object↔Dict
 //! - Output-only: Ellipsis, Tuple, Bytes, Exception, Repr (serialize but cannot deserialize)
 
-use monty::{ExcType, Executor, PyObject};
+use monty::{ExcType, Executor, MontyObject};
 
 // === JSON Input Tests ===
 
 #[test]
 fn json_input_primitives() {
     // Test all primitive JSON types deserialize correctly and work as inputs
-    let int: PyObject = serde_json::from_str("42").unwrap();
-    let float: PyObject = serde_json::from_str("2.5").unwrap();
-    let string: PyObject = serde_json::from_str(r#""hello""#).unwrap();
-    let bool_val: PyObject = serde_json::from_str("true").unwrap();
-    let null: PyObject = serde_json::from_str("null").unwrap();
+    let int: MontyObject = serde_json::from_str("42").unwrap();
+    let float: MontyObject = serde_json::from_str("2.5").unwrap();
+    let string: MontyObject = serde_json::from_str(r#""hello""#).unwrap();
+    let bool_val: MontyObject = serde_json::from_str("true").unwrap();
+    let null: MontyObject = serde_json::from_str("null").unwrap();
 
-    assert_eq!(int, PyObject::Int(42));
-    assert_eq!(float, PyObject::Float(2.5));
-    assert_eq!(string, PyObject::String("hello".to_string()));
-    assert_eq!(bool_val, PyObject::Bool(true));
-    assert_eq!(null, PyObject::None);
+    assert_eq!(int, MontyObject::Int(42));
+    assert_eq!(float, MontyObject::Float(2.5));
+    assert_eq!(string, MontyObject::String("hello".to_string()));
+    assert_eq!(bool_val, MontyObject::Bool(true));
+    assert_eq!(null, MontyObject::None);
 }
 
 #[test]
 fn json_input_run_code() {
     // Deserialize JSON and use as input to executor
-    let input: PyObject = serde_json::from_str(r#"{"x": 10, "y": 32}"#).unwrap();
+    let input: MontyObject = serde_json::from_str(r#"{"x": 10, "y": 32}"#).unwrap();
     let ex = Executor::new("data['x'] + data['y']".to_owned(), "test.py", vec!["data".to_owned()]).unwrap();
     let result = ex.run_no_limits(vec![input]).unwrap();
-    assert_eq!(result, PyObject::Int(42));
+    assert_eq!(result, MontyObject::Int(42));
 }
 
 #[test]
 fn json_input_nested() {
-    let input: PyObject = serde_json::from_str(r#"{"outer": {"inner": [1, 2, 3]}}"#).unwrap();
+    let input: MontyObject = serde_json::from_str(r#"{"outer": {"inner": [1, 2, 3]}}"#).unwrap();
     let ex = Executor::new("x['outer']['inner'][1]".to_owned(), "test.py", vec!["x".to_owned()]).unwrap();
     let result = ex.run_no_limits(vec![input]).unwrap();
-    assert_eq!(result, PyObject::Int(2));
+    assert_eq!(result, MontyObject::Int(2));
 }
 
 // === JSON Output Tests ===
@@ -46,14 +46,14 @@ fn json_input_nested() {
 #[test]
 fn json_output_primitives() {
     // Test all primitive types serialize to natural JSON
-    assert_eq!(serde_json::to_string(&PyObject::Int(42)).unwrap(), "42");
-    assert_eq!(serde_json::to_string(&PyObject::Float(1.5)).unwrap(), "1.5");
+    assert_eq!(serde_json::to_string(&MontyObject::Int(42)).unwrap(), "42");
+    assert_eq!(serde_json::to_string(&MontyObject::Float(1.5)).unwrap(), "1.5");
     assert_eq!(
-        serde_json::to_string(&PyObject::String("hi".into())).unwrap(),
+        serde_json::to_string(&MontyObject::String("hi".into())).unwrap(),
         r#""hi""#
     );
-    assert_eq!(serde_json::to_string(&PyObject::Bool(true)).unwrap(), "true");
-    assert_eq!(serde_json::to_string(&PyObject::None).unwrap(), "null");
+    assert_eq!(serde_json::to_string(&MontyObject::Bool(true)).unwrap(), "true");
+    assert_eq!(serde_json::to_string(&MontyObject::None).unwrap(), "null");
 }
 
 #[test]
@@ -73,8 +73,8 @@ fn json_output_dict() {
 #[test]
 fn json_output_dict_nonstring_key() {
     // Dict with non-string key uses py_repr for the key
-    let map = vec![(PyObject::Int(42), PyObject::String("value".to_string()))];
-    let obj = PyObject::dict(map);
+    let map = vec![(MontyObject::Int(42), MontyObject::String("value".to_string()))];
+    let obj = MontyObject::dict(map);
     assert_eq!(serde_json::to_string(&obj).unwrap(), r#"{"42":"value"}"#);
 }
 
@@ -103,7 +103,7 @@ fn json_output_ellipsis() {
 
 #[test]
 fn json_output_exception() {
-    let obj = PyObject::Exception {
+    let obj = MontyObject::Exception {
         exc_type: ExcType::ValueError,
         arg: Some("test".to_string()),
     };
@@ -115,7 +115,7 @@ fn json_output_exception() {
 
 #[test]
 fn json_output_repr() {
-    let obj = PyObject::Repr("<function foo>".to_string());
+    let obj = MontyObject::Repr("<function foo>".to_string());
     assert_eq!(serde_json::to_string(&obj).unwrap(), r#"{"$repr":"<function foo>"}"#);
 }
 
@@ -124,7 +124,7 @@ fn json_output_cycle_list() {
     // Test JSON serialization of cyclic list
     let ex = Executor::new("a = []; a.append(a); a".to_owned(), "test.py", vec![]).unwrap();
     let result = ex.run_no_limits(vec![]).unwrap();
-    // The cyclic reference becomes PyObject::Cycle("[...]")
+    // The cyclic reference becomes MontyObject::Cycle("[...]")
     assert_eq!(serde_json::to_string(&result).unwrap(), r#"[{"$cycle":"[...]"}]"#);
 }
 
@@ -133,7 +133,7 @@ fn json_output_cycle_dict() {
     // Test JSON serialization of cyclic dict
     let ex = Executor::new("d = {}; d['self'] = d; d".to_owned(), "test.py", vec![]).unwrap();
     let result = ex.run_no_limits(vec![]).unwrap();
-    // The cyclic reference becomes PyObject::Cycle("{...}")
+    // The cyclic reference becomes MontyObject::Cycle("{...}")
     assert_eq!(
         serde_json::to_string(&result).unwrap(),
         r#"{"self":{"$cycle":"{...}"}}"#
@@ -153,15 +153,15 @@ fn json_roundtrip() {
     .unwrap();
     let result = ex.run_no_limits(vec![]).unwrap();
     let json = serde_json::to_string(&result).unwrap();
-    let parsed: PyObject = serde_json::from_str(&json).unwrap();
+    let parsed: MontyObject = serde_json::from_str(&json).unwrap();
     assert_eq!(result, parsed);
 }
 
 #[test]
 fn json_roundtrip_empty() {
     // Empty structures round-trip correctly
-    let list: PyObject = serde_json::from_str("[]").unwrap();
-    let dict: PyObject = serde_json::from_str("{}").unwrap();
+    let list: MontyObject = serde_json::from_str("[]").unwrap();
+    let dict: MontyObject = serde_json::from_str("{}").unwrap();
     assert_eq!(serde_json::to_string(&list).unwrap(), "[]");
     assert_eq!(serde_json::to_string(&dict).unwrap(), "{}");
 }
@@ -176,11 +176,11 @@ fn cycle_equality_same_id() {
     let result = ex.run_no_limits(vec![]).unwrap();
 
     // Result should be a list containing two identical cyclic lists
-    if let PyObject::List(outer) = &result {
+    if let MontyObject::List(outer) = &result {
         assert_eq!(outer.len(), 2, "outer list should have 2 elements");
 
         // Both inner lists should contain the same Cycle reference
-        if let (PyObject::List(inner1), PyObject::List(inner2)) = (&outer[0], &outer[1]) {
+        if let (MontyObject::List(inner1), MontyObject::List(inner2)) = (&outer[0], &outer[1]) {
             assert_eq!(inner1.len(), 1);
             assert_eq!(inner2.len(), 1);
 
@@ -188,7 +188,7 @@ fn cycle_equality_same_id() {
             assert_eq!(inner1[0], inner2[0], "cycles referencing same object should be equal");
 
             // Verify they are actually Cycle variants
-            assert!(matches!(&inner1[0], PyObject::Cycle(..)));
+            assert!(matches!(&inner1[0], MontyObject::Cycle(..)));
         } else {
             panic!("expected inner lists");
         }
@@ -210,11 +210,11 @@ fn cycle_equality_different_ids() {
     let result = ex.run_no_limits(vec![]).unwrap();
 
     // Result should be a list containing two different cyclic lists
-    if let PyObject::List(outer) = &result {
+    if let MontyObject::List(outer) = &result {
         assert_eq!(outer.len(), 2, "outer list should have 2 elements");
 
         // Both inner lists contain their own cycle references
-        if let (PyObject::List(inner1), PyObject::List(inner2)) = (&outer[0], &outer[1]) {
+        if let (MontyObject::List(inner1), MontyObject::List(inner2)) = (&outer[0], &outer[1]) {
             assert_eq!(inner1.len(), 1);
             assert_eq!(inner2.len(), 1);
 
@@ -225,7 +225,7 @@ fn cycle_equality_different_ids() {
             );
 
             // Verify they are both Cycle variants with same placeholder but different IDs
-            if let (PyObject::Cycle(id1, ph1), PyObject::Cycle(id2, ph2)) = (&inner1[0], &inner2[0]) {
+            if let (MontyObject::Cycle(id1, ph1), MontyObject::Cycle(id2, ph2)) = (&inner1[0], &inner2[0]) {
                 assert_ne!(id1, id2, "heap IDs should differ");
                 assert_eq!(ph1, ph2, "placeholders should match (both are lists)");
                 assert_eq!(*ph1, "[...]");

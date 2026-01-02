@@ -27,23 +27,23 @@ def test_multiple_runs_same_instance():
 
 def test_repr_no_inputs():
     m = monty.Monty('1 + 1')
-    assert repr(m) == snapshot("Monty(<1 line of code>, file_name='main.py')")
+    assert repr(m) == snapshot("Monty(<1 line of code>, script_name='main.py')")
 
 
 def test_repr_with_inputs():
     m = monty.Monty('x', inputs=['x', 'y'])
-    assert repr(m) == snapshot('Monty(<1 line of code>, file_name=\'main.py\', inputs=["x", "y"])')
+    assert repr(m) == snapshot('Monty(<1 line of code>, script_name=\'main.py\', inputs=["x", "y"])')
 
 
 def test_repr_with_external_functions():
     m = monty.Monty('foo()', external_functions=['foo'])
-    assert repr(m) == snapshot('Monty(<1 line of code>, file_name=\'main.py\', external_functions=["foo"])')
+    assert repr(m) == snapshot('Monty(<1 line of code>, script_name=\'main.py\', external_functions=["foo"])')
 
 
 def test_repr_with_inputs_and_external_functions():
     m = monty.Monty('foo(x)', inputs=['x'], external_functions=['foo'])
     assert repr(m) == snapshot(
-        'Monty(<1 line of code>, file_name=\'main.py\', inputs=["x"], external_functions=["foo"])'
+        'Monty(<1 line of code>, script_name=\'main.py\', inputs=["x"], external_functions=["foo"])'
     )
 
 

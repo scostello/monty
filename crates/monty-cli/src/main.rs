@@ -3,7 +3,7 @@ use std::fs;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use monty::{NoLimitTracker, PyObject, RunProgress, RunSnapshot, StdPrint};
+use monty::{MontyObject, NoLimitTracker, RunProgress, RunSnapshot, StdPrint};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -78,8 +78,8 @@ fn main() -> ExitCode {
                         eprintln!("add_ints requires exactly 2 arguments, got {}", args.len());
                         return ExitCode::FAILURE;
                     }
-                    if let (PyObject::Int(a), PyObject::Int(b)) = (&args[0], &args[1]) {
-                        let ret = PyObject::Int(a + b);
+                    if let (MontyObject::Int(a), MontyObject::Int(b)) = (&args[0], &args[1]) {
+                        let ret = MontyObject::Int(a + b);
                         eprintln!("Function call: {function_name}({args:?}) -> {ret:?}");
                         ret
                     } else {

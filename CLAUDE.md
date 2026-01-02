@@ -85,6 +85,8 @@ cargo test --features ref-count-panic str__ops
 cargo run -p monty-cli -- <file.py>
 ```
 
+Read `Makefile` for other useful commands.
+
 ### Test File Structure
 
 Most functionality should be tested via python files in the `crates/monty/test_cases` directory.

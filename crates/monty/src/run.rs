@@ -6,7 +6,7 @@ use crate::heap::Heap;
 use crate::intern::{ExtFunctionId, Interns};
 use crate::io::{PrintWriter, StdPrint};
 use crate::namespace::Namespaces;
-use crate::object::PyObject;
+use crate::object::MontyObject;
 use crate::parse::parse;
 use crate::prepare::prepare;
 use crate::resource::NoLimitTracker;
@@ -33,11 +33,11 @@ use crate::PythonException;
 ///
 /// # Example
 /// ```
-/// use monty::{NoLimitTracker, RunSnapshot, RunProgress, PyObject, StdPrint};
+/// use monty::{NoLimitTracker, RunSnapshot, RunProgress, MontyObject, StdPrint};
 ///
 /// let snapshot = RunSnapshot::new("x + 1".to_owned(), "test.py", vec!["x".to_owned()], vec![]).unwrap();
-/// match snapshot.run_snapshot(vec![PyObject::Int(41)], NoLimitTracker::default(), &mut StdPrint).unwrap() {
-///     RunProgress::Complete(result) => assert_eq!(result, PyObject::Int(42)),
+/// match snapshot.run_snapshot(vec![MontyObject::Int(41)], NoLimitTracker::default(), &mut StdPrint).unwrap() {
+///     RunProgress::Complete(result) => assert_eq!(result, MontyObject::Int(42)),
 ///     _ => panic!("unexpected function call"),
 /// }
 /// ```
@@ -87,10 +87,10 @@ impl RunSnapshot {
     ///
     pub fn run_no_snapshot(
         &self,
-        inputs: Vec<PyObject>,
+        inputs: Vec<MontyObject>,
         resource_tracker: impl ResourceTracker,
         print: &mut impl PrintWriter,
-    ) -> Result<PyObject, PythonException> {
+    ) -> Result<MontyObject, PythonException> {
         self.executor.run_with_tracker(inputs, resource_tracker, print)
     }
 
@@ -106,11 +106,11 @@ impl RunSnapshot {
     /// # Errors
     /// Returns `PythonException` if:
     /// - The number of inputs doesn't match the expected count
-    /// - An input value is invalid (e.g., `PyObject::Repr`)
+    /// - An input value is invalid (e.g., `MontyObject::Repr`)
     /// - A runtime error occurs during execution
     pub fn run_snapshot<T: ResourceTracker>(
         self,
-        inputs: Vec<PyObject>,
+        inputs: Vec<MontyObject>,
         resource_tracker: T,
         print: &mut impl PrintWriter,
     ) -> Result<RunProgress<T>, PythonException> {
@@ -141,14 +141,14 @@ pub enum RunProgress<T: ResourceTracker> {
         /// The name of the function being called.
         function_name: String,
         /// The positional arguments passed to the function.
-        args: Vec<PyObject>,
+        args: Vec<MontyObject>,
         /// The keyword arguments passed to the function (key, value pairs).
-        kwargs: Vec<(PyObject, PyObject)>,
+        kwargs: Vec<(MontyObject, MontyObject)>,
         /// The execution state that can be resumed with a return value.
         state: Snapshot<T>,
     },
     /// Execution completed with a final result.
-    Complete(PyObject),
+    Complete(MontyObject),
 }
 
 impl<T: ResourceTracker> RunProgress<T> {
@@ -156,7 +156,9 @@ impl<T: ResourceTracker> RunProgress<T> {
     ///
     /// Returns (function_name, positional_args, keyword_args, state).
     #[allow(clippy::type_complexity)]
-    pub fn into_function_call(self) -> Option<(String, Vec<PyObject>, Vec<(PyObject, PyObject)>, Snapshot<T>)> {
+    pub fn into_function_call(
+        self,
+    ) -> Option<(String, Vec<MontyObject>, Vec<(MontyObject, MontyObject)>, Snapshot<T>)> {
         match self {
             RunProgress::FunctionCall {
                 function_name,
@@ -169,7 +171,7 @@ impl<T: ResourceTracker> RunProgress<T> {
     }
 
     /// Consumes the `RunProgress` and returns the final value.
-    pub fn into_complete(self) -> Option<PyObject> {
+    pub fn into_complete(self) -> Option<MontyObject> {
         match self {
             RunProgress::Complete(value) => Some(value),
             RunProgress::FunctionCall { .. } => None,
@@ -209,10 +211,10 @@ impl<T: ResourceTracker> Snapshot<T> {
     /// * `return_value` - The value returned by the external function
     pub fn run(
         mut self,
-        return_value: PyObject,
+        return_value: MontyObject,
         print: &mut impl PrintWriter,
     ) -> Result<RunProgress<T>, PythonException> {
-        // Convert PyObject to Value
+        // Convert MontyObject to Value
         let value = return_value
             .to_value(&mut self.heap, &self.executor.interns)
             .map_err(|_| {
@@ -309,9 +311,9 @@ impl Executor {
     ///
     /// let ex = Executor::new("1 + 2".to_owned(), "test.py", vec![]).unwrap();
     /// let py_object = ex.run_no_limits(vec![]).unwrap();
-    /// assert_eq!(py_object, monty::PyObject::Int(3));
+    /// assert_eq!(py_object, monty::MontyObject::Int(3));
     /// ```
-    pub fn run_no_limits(&self, inputs: Vec<PyObject>) -> Result<PyObject, PythonException> {
+    pub fn run_no_limits(&self, inputs: Vec<MontyObject>) -> Result<MontyObject, PythonException> {
         self.run_with_tracker(inputs, NoLimitTracker::default(), &mut StdPrint)
     }
 
@@ -326,16 +328,20 @@ impl Executor {
     /// # Example
     /// ```
     /// use std::time::Duration;
-    /// use monty::{Executor, ResourceLimits, PyObject};
+    /// use monty::{Executor, ResourceLimits, MontyObject};
     ///
     /// let limits = ResourceLimits::new()
     ///     .max_allocations(1000)
     ///     .max_duration(Duration::from_secs(5));
     /// let ex = Executor::new("1 + 2".to_owned(), "test.py", vec![]).unwrap();
     /// let py_object = ex.run_with_limits(vec![], limits).unwrap();
-    /// assert_eq!(py_object, PyObject::Int(3));
+    /// assert_eq!(py_object, MontyObject::Int(3));
     /// ```
-    pub fn run_with_limits(&self, inputs: Vec<PyObject>, limits: ResourceLimits) -> Result<PyObject, PythonException> {
+    pub fn run_with_limits(
+        &self,
+        inputs: Vec<MontyObject>,
+        limits: ResourceLimits,
+    ) -> Result<MontyObject, PythonException> {
         let resource_tracker = LimitedTracker::new(limits);
         self.run_with_tracker(inputs, resource_tracker, &mut StdPrint)
     }
@@ -349,9 +355,9 @@ impl Executor {
     /// * `print` - Custom print print implementation
     pub fn run_with_writer(
         &self,
-        inputs: Vec<PyObject>,
+        inputs: Vec<MontyObject>,
         print: &mut impl PrintWriter,
-    ) -> Result<PyObject, PythonException> {
+    ) -> Result<MontyObject, PythonException> {
         self.run_with_tracker(inputs, NoLimitTracker::default(), print)
     }
 
@@ -368,10 +374,10 @@ impl Executor {
     ///
     fn run_with_tracker(
         &self,
-        inputs: Vec<PyObject>,
+        inputs: Vec<MontyObject>,
         resource_tracker: impl ResourceTracker,
         print: &mut impl PrintWriter,
-    ) -> Result<PyObject, PythonException> {
+    ) -> Result<MontyObject, PythonException> {
         let mut heap = Heap::new(self.namespace_size, resource_tracker);
         let mut namespaces = self.prepare_namespaces(inputs, &mut heap)?;
 
@@ -401,7 +407,7 @@ impl Executor {
     ///
     /// Only available when the `ref-count-return` feature is enabled.
     #[cfg(feature = "ref-count-return")]
-    pub fn run_ref_counts(&self, inputs: Vec<PyObject>) -> Result<RefCountOutput, PythonException> {
+    pub fn run_ref_counts(&self, inputs: Vec<MontyObject>) -> Result<RefCountOutput, PythonException> {
         use crate::value::Value;
         use std::collections::HashSet;
 
@@ -434,7 +440,7 @@ impl Executor {
             obj.drop_with_heap(&mut heap);
         }
 
-        // Now convert the return value to PyObject (this drops the Value, decrementing refcount)
+        // Now convert the return value to MontyObject (this drops the Value, decrementing refcount)
         let py_object = frame_exit_to_object(frame_exit_result, &mut heap, &self.interns)
             .map_err(|e| e.into_python_exception(&self.interns, &self.code))?;
 
@@ -448,11 +454,11 @@ impl Executor {
 
     /// Prepares the namespace namespaces for execution.
     ///
-    /// Converts each `PyObject` input to a `Value`, allocating on the heap if needed.
+    /// Converts each `MontyObject` input to a `Value`, allocating on the heap if needed.
     /// Returns the prepared Namespaces or an error if there are too many inputs or invalid input types.
     fn prepare_namespaces(
         &self,
-        inputs: Vec<PyObject>,
+        inputs: Vec<MontyObject>,
         heap: &mut Heap<impl ResourceTracker>,
     ) -> Result<Namespaces, PythonException> {
         let Some(extra) = self
@@ -466,7 +472,7 @@ impl Executor {
         for f_id in &self.external_function_ids {
             namespace.push(Value::ExtFunction(*f_id));
         }
-        // Convert each PyObject to a Value, propagating any invalid input errors
+        // Convert each MontyObject to a Value, propagating any invalid input errors
         for input in inputs {
             namespace.push(
                 input
@@ -507,14 +513,14 @@ impl Executor {
                 #[cfg(feature = "ref-count-panic")]
                 namespaces.drop_global_with_heap(&mut heap);
 
-                Ok(RunProgress::Complete(PyObject::None))
+                Ok(RunProgress::Complete(MontyObject::None))
             }
             Some(FrameExit::Return(return_value)) => {
                 // Clean up the global namespace before returning (only needed with ref-count-panic)
                 #[cfg(feature = "ref-count-panic")]
                 namespaces.drop_global_with_heap(&mut heap);
 
-                let py_object = PyObject::new(return_value, &mut heap, &self.interns);
+                let py_object = MontyObject::new(return_value, &mut heap, &self.interns);
                 Ok(RunProgress::Complete(py_object))
             }
             Some(FrameExit::ExternalCall(ExternalCall { function_id, args })) => {
@@ -539,20 +545,20 @@ fn frame_exit_to_object(
     frame_exit_result: RunResult<Option<FrameExit>>,
     heap: &mut Heap<impl ResourceTracker>,
     interns: &Interns,
-) -> RunResult<PyObject> {
+) -> RunResult<MontyObject> {
     match frame_exit_result? {
-        Some(FrameExit::Return(return_value)) => Ok(PyObject::new(return_value, heap, interns)),
+        Some(FrameExit::Return(return_value)) => Ok(MontyObject::new(return_value, heap, interns)),
         Some(FrameExit::ExternalCall(_)) => {
             Err(ExcType::not_implemented("external function calls not supported by standard execution.").into())
         }
-        None => Ok(PyObject::None),
+        None => Ok(MontyObject::None),
     }
 }
 
 #[cfg(feature = "ref-count-return")]
 #[derive(Debug)]
 pub struct RefCountOutput {
-    pub py_object: PyObject,
+    pub py_object: MontyObject,
     pub counts: ahash::AHashMap<String, usize>,
     pub unique_refs: usize,
     pub heap_count: usize,

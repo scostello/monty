@@ -9,7 +9,7 @@ use crate::{
     run_frame::RunResult,
     types::Dict,
     value::Value,
-    PyObject, ResourceTracker,
+    MontyObject, ResourceTracker,
 };
 
 /// Type for method call arguments.
@@ -84,24 +84,24 @@ impl ArgValues {
         }
     }
 
-    /// Converts the arguments into a Vec of PyObjects.
+    /// Converts the arguments into a Vec of MontyObjects.
     ///
     /// This is used when passing arguments to external functions.
     pub fn into_py_objects(
         self,
         heap: &mut Heap<impl ResourceTracker>,
         interns: &Interns,
-    ) -> (Vec<PyObject>, Vec<(PyObject, PyObject)>) {
+    ) -> (Vec<MontyObject>, Vec<(MontyObject, MontyObject)>) {
         match self {
             Self::Empty => (vec![], vec![]),
-            Self::One(a) => (vec![PyObject::new(a, heap, interns)], vec![]),
+            Self::One(a) => (vec![MontyObject::new(a, heap, interns)], vec![]),
             Self::Two(a1, a2) => (
-                vec![PyObject::new(a1, heap, interns), PyObject::new(a2, heap, interns)],
+                vec![MontyObject::new(a1, heap, interns), MontyObject::new(a2, heap, interns)],
                 vec![],
             ),
             Self::Kwargs(kwargs) => (vec![], kwargs.into_py_objects(heap, interns)),
             Self::ArgsKargs { args, kwargs } => (
-                args.into_iter().map(|v| PyObject::new(v, heap, interns)).collect(),
+                args.into_iter().map(|v| MontyObject::new(v, heap, interns)).collect(),
                 kwargs.into_py_objects(heap, interns),
             ),
         }
@@ -173,23 +173,27 @@ impl KwargsValues {
         self.len() == 0
     }
 
-    /// Converts the arguments into a Vec of PyObjects.
+    /// Converts the arguments into a Vec of MontyObjects.
     ///
     /// This is used when passing arguments to external functions.
-    fn into_py_objects(self, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> Vec<(PyObject, PyObject)> {
+    fn into_py_objects(
+        self,
+        heap: &mut Heap<impl ResourceTracker>,
+        interns: &Interns,
+    ) -> Vec<(MontyObject, MontyObject)> {
         match self {
             KwargsValues::Empty => vec![],
             KwargsValues::Inline(kvs) => kvs
                 .into_iter()
                 .map(|(k, v)| {
-                    let key = PyObject::String(interns.get_str(k).to_owned());
-                    let value = PyObject::new(v, heap, interns);
+                    let key = MontyObject::String(interns.get_str(k).to_owned());
+                    let value = MontyObject::new(v, heap, interns);
                     (key, value)
                 })
                 .collect(),
             KwargsValues::Dict(dict) => dict
                 .into_iter()
-                .map(|(k, v)| (PyObject::new(k, heap, interns), PyObject::new(v, heap, interns)))
+                .map(|(k, v)| (MontyObject::new(k, heap, interns), MontyObject::new(v, heap, interns)))
                 .collect(),
         }
     }

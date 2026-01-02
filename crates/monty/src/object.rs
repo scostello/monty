@@ -30,14 +30,14 @@ use crate::{
 /// A Python value that can be passed to or returned from the interpreter.
 ///
 /// This is the public-facing type for Python values. It owns all its data and can be
-/// freely cloned, serialized, or stored. Unlike the internal `Value` type, `PyObject`
+/// freely cloned, serialized, or stored. Unlike the internal `Value` type, `MontyObject`
 /// does not require a heap for operations.
 ///
 /// # Input vs Output Variants
 ///
 /// Most variants can be used both as inputs (passed to `Executor::run()`) and outputs
 /// (returned from execution). However:
-/// - `Repr` is output-only: represents values that have no direct `PyObject` mapping
+/// - `Repr` is output-only: represents values that have no direct `MontyObject` mapping
 /// - `Exception` can be used as input (to raise) or output (when code raises)
 ///
 /// # Hashability
@@ -47,7 +47,7 @@ use crate::{
 ///
 /// # JSON Serialization
 ///
-/// `PyObject` supports JSON serialization with natural mappings:
+/// `MontyObject` supports JSON serialization with natural mappings:
 ///
 /// **Bidirectional (can serialize and deserialize):**
 /// - `None` ↔ JSON `null`
@@ -65,7 +65,7 @@ use crate::{
 /// - `Exception` → `{"$exception": {"type": "...", "arg": "..."}}`
 /// - `Repr` → `{"$repr": "..."}`
 #[derive(Debug, Clone)]
-pub enum PyObject {
+pub enum MontyObject {
     /// Python's `Ellipsis` singleton (`...`).
     Ellipsis,
     /// Python's `None` singleton.
@@ -81,15 +81,15 @@ pub enum PyObject {
     /// Python bytes object.
     Bytes(Vec<u8>),
     /// Python list (mutable sequence).
-    List(Vec<PyObject>),
+    List(Vec<MontyObject>),
     /// Python tuple (immutable sequence).
-    Tuple(Vec<PyObject>),
+    Tuple(Vec<MontyObject>),
     /// Python dictionary (insertion-ordered mapping).
     Dict(DictPairs),
     /// Python set (mutable, unordered collection of unique elements).
-    Set(Vec<PyObject>),
+    Set(Vec<MontyObject>),
     /// Python frozenset (immutable, unordered collection of unique elements).
-    FrozenSet(Vec<PyObject>),
+    FrozenSet(Vec<MontyObject>),
     /// Python exception with type and optional message argument.
     Exception {
         /// The exception type (e.g., `ValueError`, `TypeError`).
@@ -107,7 +107,7 @@ pub enum PyObject {
     ///
     /// This is output-only and cannot be used as an input to `Executor::run()`.
     Repr(String),
-    /// Represents a cycle detected during Value-to-PyObject conversion.
+    /// Represents a cycle detected during Value-to-MontyObject conversion.
     ///
     /// When converting cyclic structures (e.g., `a = []; a.append(a)`), this variant
     /// is used to break the infinite recursion. Contains the type-specific placeholder
@@ -117,7 +117,7 @@ pub enum PyObject {
     Cycle(HeapId, &'static str),
 }
 
-impl fmt::Display for PyObject {
+impl fmt::Display for MontyObject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::String(s) => f.write_str(s),
@@ -128,10 +128,10 @@ impl fmt::Display for PyObject {
     }
 }
 
-impl PyObject {
-    /// Converts a `Value` into a `PyObject`, properly handling reference counting.
+impl MontyObject {
+    /// Converts a `Value` into a `MontyObject`, properly handling reference counting.
     ///
-    /// Takes ownership of the `Value`, extracts its content to create a PyObject,
+    /// Takes ownership of the `Value`, extracts its content to create a MontyObject,
     /// then properly drops the Value via `drop_with_heap` to maintain reference counting.
     ///
     /// The `interns` parameter is used to look up interned string/bytes content.
@@ -141,12 +141,12 @@ impl PyObject {
         py_obj
     }
 
-    /// Creates a new `PyObject` from something that can be converted into a `DictPairs`.
+    /// Creates a new `MontyObject` from something that can be converted into a `DictPairs`.
     pub fn dict(dict: impl Into<DictPairs>) -> Self {
         Self::Dict(dict.into())
     }
 
-    /// Converts this `PyObject` into an `Value`, allocating on the heap if needed.
+    /// Converts this `MontyObject` into an `Value`, allocating on the heap if needed.
     ///
     /// Immediate values (None, Bool, Int, Float, Ellipsis, Exception) are created directly.
     /// Heap-allocated values (String, Bytes, List, Tuple, Dict) are allocated
@@ -226,10 +226,10 @@ impl PyObject {
         Self::from_value_inner(object, heap, &mut visited, interns)
     }
 
-    /// Internal helper for converting Value to PyObject with cycle detection.
+    /// Internal helper for converting Value to MontyObject with cycle detection.
     ///
     /// The `visited` set tracks HeapIds we're currently processing. When we encounter
-    /// a HeapId already in the set, we've found a cycle and return `PyObject::Cycle`
+    /// a HeapId already in the set, we've found a cycle and return `MontyObject::Cycle`
     /// with an appropriate placeholder string.
     fn from_value_inner(
         object: &Value,
@@ -238,7 +238,7 @@ impl PyObject {
         interns: &Interns,
     ) -> Self {
         match object {
-            Value::Undefined => panic!("Undefined found while converting to PyObject"),
+            Value::Undefined => panic!("Undefined found while converting to MontyObject"),
             Value::Ellipsis => Self::Ellipsis,
             Value::None => Self::None,
             Value::Bool(b) => Self::Bool(*b),
@@ -267,22 +267,22 @@ impl PyObject {
                     HeapData::List(list) => Self::List(
                         list.as_vec()
                             .iter()
-                            .map(|obj| PyObject::from_value_inner(obj, heap, visited, interns))
+                            .map(|obj| MontyObject::from_value_inner(obj, heap, visited, interns))
                             .collect(),
                     ),
                     HeapData::Tuple(tuple) => Self::Tuple(
                         tuple
                             .as_vec()
                             .iter()
-                            .map(|obj| PyObject::from_value_inner(obj, heap, visited, interns))
+                            .map(|obj| MontyObject::from_value_inner(obj, heap, visited, interns))
                             .collect(),
                     ),
                     HeapData::Dict(dict) => Self::Dict(DictPairs(
                         dict.into_iter()
                             .map(|(k, v)| {
                                 (
-                                    PyObject::from_value_inner(k, heap, visited, interns),
-                                    PyObject::from_value_inner(v, heap, visited, interns),
+                                    MontyObject::from_value_inner(k, heap, visited, interns),
+                                    MontyObject::from_value_inner(v, heap, visited, interns),
                                 )
                             })
                             .collect(),
@@ -290,26 +290,26 @@ impl PyObject {
                     HeapData::Set(set) => Self::Set(
                         set.storage()
                             .iter()
-                            .map(|obj| PyObject::from_value_inner(obj, heap, visited, interns))
+                            .map(|obj| MontyObject::from_value_inner(obj, heap, visited, interns))
                             .collect(),
                     ),
                     HeapData::FrozenSet(frozenset) => Self::FrozenSet(
                         frozenset
                             .storage()
                             .iter()
-                            .map(|obj| PyObject::from_value_inner(obj, heap, visited, interns))
+                            .map(|obj| MontyObject::from_value_inner(obj, heap, visited, interns))
                             .collect(),
                     ),
                     // Cells are internal closure implementation details
                     HeapData::Cell(inner) => {
                         // Show the cell's contents
-                        PyObject::from_value_inner(inner, heap, visited, interns)
+                        MontyObject::from_value_inner(inner, heap, visited, interns)
                     }
                     HeapData::Closure(..) | HeapData::FunctionDefaults(..) => {
                         Self::Repr(object.py_repr(heap, interns).into_owned())
                     }
                     HeapData::Range(range) => {
-                        // Represent Range as a repr string since PyObject doesn't have a Range variant
+                        // Represent Range as a repr string since MontyObject doesn't have a Range variant
                         let mut s = String::new();
                         let _ = range.py_repr_fmt(&mut s, heap, visited, interns);
                         Self::Repr(s)
@@ -326,7 +326,7 @@ impl PyObject {
             }
             Value::Builtin(Builtins::Type(t)) => Self::Type(*t),
             #[cfg(feature = "ref-count-panic")]
-            Value::Dereferenced => panic!("Dereferenced found while converting to PyObject"),
+            Value::Dereferenced => panic!("Dereferenced found while converting to MontyObject"),
             _ => Self::Repr(object.py_repr(heap, interns).into_owned()),
         }
     }
@@ -503,7 +503,7 @@ impl PyObject {
     }
 }
 
-impl Hash for PyObject {
+impl Hash for MontyObject {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash the discriminant first
         std::mem::discriminant(self).hash(state);
@@ -526,7 +526,7 @@ impl Hash for PyObject {
     }
 }
 
-impl PartialEq for PyObject {
+impl PartialEq for MontyObject {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Ellipsis, Self::Ellipsis) => true,
@@ -560,23 +560,23 @@ impl PartialEq for PyObject {
     }
 }
 
-impl Eq for PyObject {}
+impl Eq for MontyObject {}
 
-impl AsRef<PyObject> for PyObject {
-    fn as_ref(&self) -> &PyObject {
+impl AsRef<MontyObject> for MontyObject {
+    fn as_ref(&self) -> &MontyObject {
         self
     }
 }
 
-/// Error returned when a `PyObject` cannot be converted to the requested Rust type.
+/// Error returned when a `MontyObject` cannot be converted to the requested Rust type.
 ///
 /// This error is returned by the `TryFrom` implementations when attempting to extract
-/// a specific type from a `PyObject` that holds a different variant.
+/// a specific type from a `MontyObject` that holds a different variant.
 #[derive(Debug)]
 pub struct ConversionError {
     /// The type name that was expected (e.g., "int", "str").
     pub expected: &'static str,
-    /// The actual type name of the `PyObject` (e.g., "list", "NoneType").
+    /// The actual type name of the `MontyObject` (e.g., "list", "NoneType").
     pub actual: &'static str,
 }
 
@@ -596,10 +596,10 @@ impl fmt::Display for ConversionError {
 
 impl std::error::Error for ConversionError {}
 
-/// Error returned when a `PyObject` cannot be used as an input to code execution.
+/// Error returned when a `MontyObject` cannot be used as an input to code execution.
 ///
 /// This can occur when:
-/// - A `PyObject` variant (like `Repr`) is only valid as an output, not an input
+/// - A `MontyObject` variant (like `Repr`) is only valid as an output, not an input
 /// - A resource limit (memory, allocations) is exceeded during conversion
 #[derive(Debug, Clone)]
 pub enum InvalidInputError {
@@ -635,41 +635,41 @@ impl From<crate::resource::ResourceError> for InvalidInputError {
     }
 }
 
-/// Attempts to convert a PyObject to an i64 integer.
+/// Attempts to convert a MontyObject to an i64 integer.
 /// Returns an error if the object is not an Int variant.
-impl TryFrom<&PyObject> for i64 {
+impl TryFrom<&MontyObject> for i64 {
     type Error = ConversionError;
 
-    fn try_from(value: &PyObject) -> Result<Self, Self::Error> {
+    fn try_from(value: &MontyObject) -> Result<Self, Self::Error> {
         match value {
-            PyObject::Int(i) => Ok(*i),
+            MontyObject::Int(i) => Ok(*i),
             _ => Err(ConversionError::new("int", value.type_name())),
         }
     }
 }
 
-/// Attempts to convert a PyObject to an f64 float.
+/// Attempts to convert a MontyObject to an f64 float.
 /// Returns an error if the object is not a Float or Int variant.
 /// Int values are automatically converted to f64 to match python's behavior.
-impl TryFrom<&PyObject> for f64 {
+impl TryFrom<&MontyObject> for f64 {
     type Error = ConversionError;
 
-    fn try_from(value: &PyObject) -> Result<Self, Self::Error> {
+    fn try_from(value: &MontyObject) -> Result<Self, Self::Error> {
         match value {
-            PyObject::Float(f) => Ok(*f),
-            PyObject::Int(i) => Ok(*i as f64),
+            MontyObject::Float(f) => Ok(*f),
+            MontyObject::Int(i) => Ok(*i as f64),
             _ => Err(ConversionError::new("float", value.type_name())),
         }
     }
 }
 
-/// Attempts to convert a PyObject to a String.
+/// Attempts to convert a MontyObject to a String.
 /// Returns an error if the object is not a heap-allocated Str variant.
-impl TryFrom<&PyObject> for String {
+impl TryFrom<&MontyObject> for String {
     type Error = ConversionError;
 
-    fn try_from(value: &PyObject) -> Result<Self, Self::Error> {
-        if let PyObject::String(s) = value {
+    fn try_from(value: &MontyObject) -> Result<Self, Self::Error> {
+        if let MontyObject::String(s) = value {
             Ok(s.clone())
         } else {
             Err(ConversionError::new("str", value.type_name()))
@@ -677,25 +677,25 @@ impl TryFrom<&PyObject> for String {
     }
 }
 
-/// Attempts to convert a `PyObject` to a bool.
+/// Attempts to convert a `MontyObject` to a bool.
 /// Returns an error if the object is not a True or False variant.
-/// Note: This does NOT use Python's truthiness rules (use PyObject::bool for that).
-impl TryFrom<&PyObject> for bool {
+/// Note: This does NOT use Python's truthiness rules (use MontyObject::bool for that).
+impl TryFrom<&MontyObject> for bool {
     type Error = ConversionError;
 
-    fn try_from(value: &PyObject) -> Result<Self, Self::Error> {
+    fn try_from(value: &MontyObject) -> Result<Self, Self::Error> {
         match value {
-            PyObject::Bool(b) => Ok(*b),
+            MontyObject::Bool(b) => Ok(*b),
             _ => Err(ConversionError::new("bool", value.type_name())),
         }
     }
 }
 
-/// Custom JSON serialization for `PyObject`.
+/// Custom JSON serialization for `MontyObject`.
 ///
 /// Serializes Python values to natural JSON representations where possible.
 /// Output-only types (Ellipsis, Tuple, Bytes, Exception, Repr) use tagged objects.
-impl Serialize for PyObject {
+impl Serialize for MontyObject {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -776,7 +776,7 @@ impl Serialize for PyObject {
     }
 }
 
-/// Custom JSON deserialization for `PyObject`.
+/// Custom JSON deserialization for `MontyObject`.
 ///
 /// Deserializes natural JSON values to Python types:
 /// - `null` → `None`
@@ -788,20 +788,20 @@ impl Serialize for PyObject {
 /// - objects → `Dict` (keys become `String` variants)
 ///
 /// Note: Tuple, Bytes, Exception, Ellipsis, and Repr cannot be deserialized from JSON.
-impl<'de> Deserialize<'de> for PyObject {
+impl<'de> Deserialize<'de> for MontyObject {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(PyObjectVisitor)
+        deserializer.deserialize_any(MontyObjectVisitor)
     }
 }
 
-/// Visitor for deserializing JSON into `PyObject`.
-struct PyObjectVisitor;
+/// Visitor for deserializing JSON into `MontyObject`.
+struct MontyObjectVisitor;
 
-impl<'de> Visitor<'de> for PyObjectVisitor {
-    type Value = PyObject;
+impl<'de> Visitor<'de> for MontyObjectVisitor {
+    type Value = MontyObject;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("a JSON value (null, bool, number, string, array, or object)")
@@ -811,28 +811,28 @@ impl<'de> Visitor<'de> for PyObjectVisitor {
     where
         E: de::Error,
     {
-        Ok(PyObject::None)
+        Ok(MontyObject::None)
     }
 
     fn visit_none<E>(self) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(PyObject::None)
+        Ok(MontyObject::None)
     }
 
     fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(PyObject::Bool(v))
+        Ok(MontyObject::Bool(v))
     }
 
     fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(PyObject::Int(v))
+        Ok(MontyObject::Int(v))
     }
 
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
@@ -841,7 +841,7 @@ impl<'de> Visitor<'de> for PyObjectVisitor {
     {
         // Convert to i64 if possible, otherwise error
         i64::try_from(v)
-            .map(PyObject::Int)
+            .map(MontyObject::Int)
             .map_err(|_| de::Error::custom(format!("integer {v} is too large for i64")))
     }
 
@@ -849,21 +849,21 @@ impl<'de> Visitor<'de> for PyObjectVisitor {
     where
         E: de::Error,
     {
-        Ok(PyObject::Float(v))
+        Ok(MontyObject::Float(v))
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(PyObject::String(v.to_owned()))
+        Ok(MontyObject::String(v.to_owned()))
     }
 
     fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
     where
         E: de::Error,
     {
-        Ok(PyObject::String(v))
+        Ok(MontyObject::String(v))
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -874,7 +874,7 @@ impl<'de> Visitor<'de> for PyObjectVisitor {
         while let Some(item) = seq.next_element()? {
             items.push(item);
         }
-        Ok(PyObject::List(items))
+        Ok(MontyObject::List(items))
     }
 
     fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -882,40 +882,40 @@ impl<'de> Visitor<'de> for PyObjectVisitor {
         A: MapAccess<'de>,
     {
         let mut pairs = Vec::new();
-        while let Some((key, value)) = map.next_entry::<String, PyObject>()? {
-            pairs.push((PyObject::String(key), value));
+        while let Some((key, value)) = map.next_entry::<String, MontyObject>()? {
+            pairs.push((MontyObject::String(key), value));
         }
-        Ok(PyObject::Dict(pairs.into()))
+        Ok(MontyObject::Dict(pairs.into()))
     }
 }
 
 /// A collection of key-value pairs representing Python dictionary contents.
 ///
-/// Used internally by `PyObject::Dict` to store dictionary entries while preserving
-/// insertion order. Keys and values are both `PyObject` instances.
+/// Used internally by `MontyObject::Dict` to store dictionary entries while preserving
+/// insertion order. Keys and values are both `MontyObject` instances.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DictPairs(Vec<(PyObject, PyObject)>);
+pub struct DictPairs(Vec<(MontyObject, MontyObject)>);
 
-impl From<Vec<(PyObject, PyObject)>> for DictPairs {
-    fn from(pairs: Vec<(PyObject, PyObject)>) -> Self {
+impl From<Vec<(MontyObject, MontyObject)>> for DictPairs {
+    fn from(pairs: Vec<(MontyObject, MontyObject)>) -> Self {
         DictPairs(pairs)
     }
 }
 
-impl From<IndexMap<PyObject, PyObject>> for DictPairs {
-    fn from(map: IndexMap<PyObject, PyObject>) -> Self {
+impl From<IndexMap<MontyObject, MontyObject>> for DictPairs {
+    fn from(map: IndexMap<MontyObject, MontyObject>) -> Self {
         DictPairs(map.into_iter().collect())
     }
 }
 
-impl From<DictPairs> for IndexMap<PyObject, PyObject> {
+impl From<DictPairs> for IndexMap<MontyObject, MontyObject> {
     fn from(pairs: DictPairs) -> Self {
         pairs.into_iter().collect()
     }
 }
 
 impl IntoIterator for DictPairs {
-    type Item = (PyObject, PyObject);
+    type Item = (MontyObject, MontyObject);
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -923,16 +923,16 @@ impl IntoIterator for DictPairs {
     }
 }
 impl<'a> IntoIterator for &'a DictPairs {
-    type Item = &'a (PyObject, PyObject);
-    type IntoIter = std::slice::Iter<'a, (PyObject, PyObject)>;
+    type Item = &'a (MontyObject, MontyObject);
+    type IntoIter = std::slice::Iter<'a, (MontyObject, MontyObject)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
     }
 }
 
-impl FromIterator<(PyObject, PyObject)> for DictPairs {
-    fn from_iter<T: IntoIterator<Item = (PyObject, PyObject)>>(iter: T) -> Self {
+impl FromIterator<(MontyObject, MontyObject)> for DictPairs {
+    fn from_iter<T: IntoIterator<Item = (MontyObject, MontyObject)>>(iter: T) -> Self {
         DictPairs(iter.into_iter().collect())
     }
 }
@@ -946,7 +946,7 @@ impl DictPairs {
         self.0.is_empty()
     }
 
-    fn iter(&self) -> impl Iterator<Item = &(PyObject, PyObject)> {
+    fn iter(&self) -> impl Iterator<Item = &(MontyObject, MontyObject)> {
         self.0.iter()
     }
 }

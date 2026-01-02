@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 /// Creates an appropriate Python exception type with the message.
 /// The traceback information is included in the exception message
 /// since PyO3 doesn't provide direct traceback manipulation.
-pub fn monty_exception_to_py(exc: PythonException) -> PyErr {
+pub fn monty_exc_to_py(exc: PythonException) -> PyErr {
     // Include traceback in the message if available
     let msg = if exc.traceback.is_empty() {
         exc.message.unwrap_or_default()
@@ -53,12 +53,12 @@ pub fn create_py_exception(exc_type: ExcType, arg: Option<String>) -> PyErr {
     }
 }
 
-/// Converts a Python exception to Monty's `PyObject::Exception`.
-pub fn exc_to_monty_object(exc: &Bound<'_, PyException>) -> ::monty::PyObject {
+/// Converts a Python exception to Monty's `MontyObject::Exception`.
+pub fn exc_to_monty_object(exc: &Bound<'_, PyException>) -> ::monty::MontyObject {
     let exc_type = py_err_to_exc_type(exc);
     let arg = exc.str().ok().map(|s| s.to_string_lossy().into_owned());
 
-    ::monty::PyObject::Exception { exc_type, arg }
+    ::monty::MontyObject::Exception { exc_type, arg }
 }
 
 /// Maps a Python exception type to Monty's `ExcType` enum.

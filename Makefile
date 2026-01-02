@@ -72,6 +72,11 @@ test-cases: ## Run tests cases only
 test-py: dev-py ## Run Python tests with pytest
 	uv run pytest
 
+.PHONY: test-docs
+test-docs: dev-py ## Test docs examples only
+	uv run pytest crates/monty-python/tests/test_readme_examples.py
+	cargo test --doc -p monty
+
 .PHONY: test
 test: test-ref-count-panic test-ref-count-return test-no-features test-py ## Run all tests
 

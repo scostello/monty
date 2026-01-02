@@ -4,7 +4,7 @@
 /// allocation limits, time limits, and triggers garbage collection.
 use std::time::Duration;
 
-use monty::{ExcType, Executor, LimitedTracker, PyObject, ResourceLimits, RunSnapshot, StdPrint};
+use monty::{ExcType, Executor, LimitedTracker, MontyObject, ResourceLimits, RunSnapshot, StdPrint};
 
 /// Test that allocation limits return an error.
 #[test]
@@ -190,10 +190,10 @@ fn executor_iter_resource_limit_on_resume() {
         .into_function_call()
         .expect("function call");
     assert_eq!(name, "foo");
-    assert_eq!(args, vec![PyObject::Int(1)]);
+    assert_eq!(args, vec![MontyObject::Int(1)]);
 
     // Resume - should fail due to allocation limit during the for loop
-    let result = state.run(PyObject::None, &mut StdPrint);
+    let result = state.run(MontyObject::None, &mut StdPrint);
     assert!(result.is_err(), "should exceed allocation limit on resume");
     let exc = result.unwrap_err();
     assert_eq!(exc.exc_type, ExcType::MemoryError);
@@ -251,30 +251,30 @@ fn executor_iter_resource_limit_multiple_function_calls() {
         .into_function_call()
         .expect("first call");
     assert_eq!(name, "foo");
-    assert_eq!(args, vec![PyObject::Int(1)]);
+    assert_eq!(args, vec![MontyObject::Int(1)]);
 
     let (name, args, _kwargs, state) = state
-        .run(PyObject::None, &mut StdPrint)
+        .run(MontyObject::None, &mut StdPrint)
         .unwrap()
         .into_function_call()
         .expect("second call");
     assert_eq!(name, "bar");
-    assert_eq!(args, vec![PyObject::Int(2)]);
+    assert_eq!(args, vec![MontyObject::Int(2)]);
 
     let (name, args, _kwargs, state) = state
-        .run(PyObject::None, &mut StdPrint)
+        .run(MontyObject::None, &mut StdPrint)
         .unwrap()
         .into_function_call()
         .expect("third call");
     assert_eq!(name, "baz");
-    assert_eq!(args, vec![PyObject::Int(3)]);
+    assert_eq!(args, vec![MontyObject::Int(3)]);
 
     let result = state
-        .run(PyObject::None, &mut StdPrint)
+        .run(MontyObject::None, &mut StdPrint)
         .unwrap()
         .into_complete()
         .expect("complete");
-    assert_eq!(result, PyObject::Int(4));
+    assert_eq!(result, MontyObject::Int(4));
 }
 
 /// Test that deep recursion triggers memory limit due to namespace tracking.

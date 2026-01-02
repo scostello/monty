@@ -4,7 +4,7 @@
 //! External functions are registered by name and called when Monty execution
 //! reaches a call to that function.
 
-use ::monty::PyObject as MontyObject;
+use ::monty::MontyObject;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
@@ -35,8 +35,8 @@ impl<'py> ExternalFunctionRegistry<'py> {
     pub fn call(
         &self,
         function_name: &str,
-        args: Vec<MontyObject>,
-        kwargs: Vec<(MontyObject, MontyObject)>,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
     ) -> MontyObject {
         match self.call_inner(function_name, args, kwargs) {
             Ok(result) => result,
@@ -48,8 +48,8 @@ impl<'py> ExternalFunctionRegistry<'py> {
     fn call_inner(
         &self,
         function_name: &str,
-        args: Vec<MontyObject>,
-        kwargs: Vec<(MontyObject, MontyObject)>,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
     ) -> PyResult<MontyObject> {
         // Look up the callable
         let callable = self.functions.get_item(function_name)?.ok_or_else(|| {
@@ -57,7 +57,7 @@ impl<'py> ExternalFunctionRegistry<'py> {
         })?;
 
         // Convert positional arguments to Python objects
-        let py_args: PyResult<Vec<Py<PyAny>>> = args.into_iter().map(|arg| monty_to_py(self.py, arg)).collect();
+        let py_args: PyResult<Vec<Py<PyAny>>> = args.iter().map(|arg| monty_to_py(self.py, arg)).collect();
         let py_args_tuple = PyTuple::new(self.py, py_args?)?;
 
         // Convert keyword arguments to Python dict

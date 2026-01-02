@@ -4,7 +4,9 @@ use std::fs;
 use std::path::Path;
 
 use ahash::AHashMap;
-use monty::{Executor, LimitedTracker, PyObject, PythonException, ResourceLimits, RunProgress, RunSnapshot, StdPrint};
+use monty::{
+    Executor, LimitedTracker, MontyObject, PythonException, ResourceLimits, RunProgress, RunSnapshot, StdPrint,
+};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -258,19 +260,19 @@ const ITER_EXT_FUNCTIONS: &[&str] = &[
 ///
 /// # Panics
 /// Panics if the function name is unknown or arguments are invalid types.
-fn dispatch_external_call(name: &str, args: Vec<PyObject>) -> PyObject {
+fn dispatch_external_call(name: &str, args: Vec<MontyObject>) -> MontyObject {
     match name {
         "add_ints" => {
             assert!(args.len() == 2, "add_ints requires 2 arguments");
             let a = i64::try_from(&args[0]).expect("add_ints: first arg must be int");
             let b = i64::try_from(&args[1]).expect("add_ints: second arg must be int");
-            PyObject::Int(a + b)
+            MontyObject::Int(a + b)
         }
         "concat_strings" => {
             assert!(args.len() == 2, "concat_strings requires 2 arguments");
             let a = String::try_from(&args[0]).expect("concat_strings: first arg must be str");
             let b = String::try_from(&args[1]).expect("concat_strings: second arg must be str");
-            PyObject::String(a + &b)
+            MontyObject::String(a + &b)
         }
         "return_value" => {
             assert!(args.len() == 1, "return_value requires 1 argument");
@@ -278,7 +280,7 @@ fn dispatch_external_call(name: &str, args: Vec<PyObject>) -> PyObject {
         }
         "get_list" => {
             assert!(args.is_empty(), "get_list requires no arguments");
-            PyObject::List(vec![PyObject::Int(1), PyObject::Int(2), PyObject::Int(3)])
+            MontyObject::List(vec![MontyObject::Int(1), MontyObject::Int(2), MontyObject::Int(3)])
         }
         _ => panic!("Unknown external function: {name}"),
     }
@@ -628,7 +630,7 @@ fn try_run_iter_test(path: &Path, code: &str, expectation: &Expectation) -> Resu
 }
 
 /// Execute the iter loop, dispatching external function calls until complete.
-fn run_iter_loop(exec: RunSnapshot) -> Result<PyObject, PythonException> {
+fn run_iter_loop(exec: RunSnapshot) -> Result<MontyObject, PythonException> {
     let limits = ResourceLimits::new().max_recursion_depth(Some(TEST_RECURSION_LIMIT));
     let mut progress = exec.run_snapshot(vec![], LimitedTracker::new(limits), &mut StdPrint)?;
 

@@ -1,3 +1,4 @@
+#![doc = include_str!("../../../README.md")]
 mod args;
 mod builtins;
 mod callable;
@@ -27,7 +28,7 @@ mod value;
 pub use crate::error::{CodeLoc, PythonException, StackFrame};
 pub use crate::exception::ExcType;
 pub use crate::io::{CollectStringPrint, NoPrint, PrintWriter, StdPrint};
-pub use crate::object::{InvalidInputError, PyObject};
+pub use crate::object::{InvalidInputError, MontyObject};
 pub use crate::resource::{LimitedTracker, NoLimitTracker, ResourceLimits, ResourceTracker};
 pub use crate::run::{Executor, RunProgress, RunSnapshot, Snapshot};
 
