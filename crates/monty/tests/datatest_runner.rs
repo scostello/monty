@@ -259,6 +259,7 @@ const ITER_EXT_FUNCTIONS: &[&str] = &[
     "make_point",         // () -> Dataclass Point(x=1, y=2) (immutable)
     "make_mutable_point", // () -> Dataclass Point(x=1, y=2) (mutable)
     "make_user",          // (name) -> Dataclass User(name=name, active=True) (immutable)
+    "make_empty",         // () -> Dataclass Empty() (immutable, no fields)
 ];
 
 /// Dispatches an external function call to the appropriate test implementation.
@@ -309,13 +310,14 @@ fn dispatch_external_call(name: &str, args: Vec<MontyObject>) -> ExternalResult 
             // Return an immutable Point(x=1, y=2) dataclass
             MontyObject::Dataclass {
                 name: "Point".to_string(),
-                fields: vec![
+                field_names: vec!["x".to_string(), "y".to_string()],
+                attrs: vec![
                     (MontyObject::String("x".to_string()), MontyObject::Int(1)),
                     (MontyObject::String("y".to_string()), MontyObject::Int(2)),
                 ]
                 .into(),
                 methods: vec![],
-                mutable: false,
+                frozen: true,
             }
             .into()
         }
@@ -324,13 +326,14 @@ fn dispatch_external_call(name: &str, args: Vec<MontyObject>) -> ExternalResult 
             // Return a mutable Point(x=1, y=2) dataclass
             MontyObject::Dataclass {
                 name: "Point".to_string(),
-                fields: vec![
+                field_names: vec!["x".to_string(), "y".to_string()],
+                attrs: vec![
                     (MontyObject::String("x".to_string()), MontyObject::Int(1)),
                     (MontyObject::String("y".to_string()), MontyObject::Int(2)),
                 ]
                 .into(),
                 methods: vec![],
-                mutable: true,
+                frozen: false,
             }
             .into()
         }
@@ -340,13 +343,26 @@ fn dispatch_external_call(name: &str, args: Vec<MontyObject>) -> ExternalResult 
             // Return an immutable User(name=name, active=True) dataclass
             MontyObject::Dataclass {
                 name: "User".to_string(),
-                fields: vec![
+                field_names: vec!["name".to_string(), "active".to_string()],
+                attrs: vec![
                     (MontyObject::String("name".to_string()), MontyObject::String(name)),
                     (MontyObject::String("active".to_string()), MontyObject::Bool(true)),
                 ]
                 .into(),
                 methods: vec![],
-                mutable: false,
+                frozen: true,
+            }
+            .into()
+        }
+        "make_empty" => {
+            assert!(args.is_empty(), "make_empty requires no arguments");
+            // Return an immutable empty dataclass with no fields
+            MontyObject::Dataclass {
+                name: "Empty".to_string(),
+                field_names: vec![],
+                attrs: vec![].into(),
+                methods: vec![],
+                frozen: true,
             }
             .into()
         }
