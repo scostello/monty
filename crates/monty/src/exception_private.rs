@@ -9,16 +9,18 @@ use strum::{Display, EnumString, IntoStaticStr};
 use crate::{
     args::ArgValues,
     exception_public::{MontyException, StackFrame},
-    expressions::ExprLoc,
+    fstring::FormatError,
     heap::{Heap, HeapData},
     intern::{Interns, StringId},
-    operators::{CmpOperator, Operator},
+    operators::CmpOperator,
     parse::CodeRange,
     resource::ResourceTracker,
-    run_frame::RunResult,
     types::{str::string_repr, PyTrait, Type},
     value::Value,
 };
+
+/// Result type alias for operations that can produce a runtime error.
+pub type RunResult<T> = Result<T, RunError>;
 
 /// Python exception types supported by the interpreter.
 ///
@@ -157,9 +159,17 @@ impl ExcType {
         Ok(Value::Ref(heap_id))
     }
 
+    /// Creates an AttributeError for when an attribute is not found (GET operation).
+    ///
+    /// Sets `hide_caret: true` because CPython doesn't show carets for attribute GET errors.
     #[must_use]
     pub fn attribute_error(type_: Type, attr: &str) -> RunError {
-        exc_fmt!(Self::AttributeError; "'{type_}' object has no attribute '{attr}'").into()
+        let exc = exc_fmt!(Self::AttributeError; "'{type_}' object has no attribute '{attr}'");
+        RunError::Exc(ExceptionRaise {
+            exc,
+            frame: None,
+            hide_caret: true, // CPython doesn't show carets for attribute GET errors
+        })
     }
 
     /// Creates an AttributeError for a dataclass method that requires external call integration.
@@ -171,12 +181,18 @@ impl ExcType {
         exc_fmt!(Self::AttributeError; "'{class_name}' object method '{method_name}' requires external call (not yet implemented)").into()
     }
 
-    /// Creates an AttributeError for when a specific attribute is not found on an object.
+    /// Creates an AttributeError for when a specific attribute is not found (GET operation).
     ///
     /// Matches CPython's format: `AttributeError: 'ClassName' object has no attribute 'attr_name'`
+    /// Sets `hide_caret: true` because CPython doesn't show carets for attribute GET errors.
     #[must_use]
     pub fn attribute_error_not_found(class_name: &str, attr_name: &str) -> RunError {
-        exc_fmt!(Self::AttributeError; "'{class_name}' object has no attribute '{attr_name}'").into()
+        let exc = exc_fmt!(Self::AttributeError; "'{class_name}' object has no attribute '{attr_name}'");
+        RunError::Exc(ExceptionRaise {
+            exc,
+            frame: None,
+            hide_caret: true, // CPython doesn't show carets for attribute GET errors
+        })
     }
 
     /// Creates an AttributeError for attribute assignment on types that don't support it.
@@ -398,12 +414,36 @@ impl ExcType {
         exc_fmt!(Self::TypeError; "{name}() got multiple values for argument '{param}'").into()
     }
 
+    /// Creates a TypeError for duplicate keyword argument.
+    ///
+    /// Matches CPython's format: `{name}() got multiple values for keyword argument '{key}'`
+    #[must_use]
+    pub fn type_error_multiple_values(name: &str, key: &str) -> RunError {
+        exc_fmt!(Self::TypeError; "{name}() got multiple values for keyword argument '{key}'").into()
+    }
+
     /// Creates a TypeError for unexpected keyword argument.
     ///
     /// Matches CPython's format: `{name}() got an unexpected keyword argument '{key}'`
     #[must_use]
     pub fn type_error_unexpected_keyword(name: &str, key: &str) -> RunError {
         exc_fmt!(Self::TypeError; "{name}() got an unexpected keyword argument '{key}'").into()
+    }
+
+    /// Creates a TypeError for **kwargs argument that is not a mapping.
+    ///
+    /// Matches CPython's format: `{name}() argument after ** must be a mapping, not {type_name}`
+    #[must_use]
+    pub fn type_error_kwargs_not_mapping(name: &str, type_name: &str) -> RunError {
+        exc_fmt!(Self::TypeError; "{name}() argument after ** must be a mapping, not {type_name}").into()
+    }
+
+    /// Creates a TypeError for **kwargs with non-string keys.
+    ///
+    /// Matches CPython's format: `{name}() keywords must be strings`
+    #[must_use]
+    pub fn type_error_kwargs_nonstring_key() -> RunError {
+        SimpleException::new(Self::TypeError, Some("keywords must be strings".to_string())).into()
     }
 
     /// Creates a simple TypeError with a custom message.
@@ -466,6 +506,14 @@ impl ExcType {
     #[must_use]
     pub fn isinstance_arg2_error() -> RunError {
         exc_static!(Self::TypeError; "isinstance() arg 2 must be a type, a tuple of types, or a union").into()
+    }
+
+    /// Creates a TypeError for invalid exception type in except clause.
+    ///
+    /// Matches CPython's format: `TypeError: catching classes that do not inherit from BaseException is not allowed`
+    #[must_use]
+    pub fn except_invalid_type_error() -> RunError {
+        exc_static!(Self::TypeError; "catching classes that do not inherit from BaseException is not allowed").into()
     }
 
     /// Creates a ValueError for range() step argument being zero.
@@ -574,6 +622,23 @@ impl ExcType {
         exc_static!(Self::OverflowError; "cannot fit 'int' into an index-sized integer")
     }
 
+    /// Creates a ValueError for negative shift count in bitwise shift operations.
+    ///
+    /// Matches CPython's format: `ValueError: negative shift count`
+    #[must_use]
+    pub fn value_error_negative_shift_count() -> RunError {
+        exc_static!(Self::ValueError; "negative shift count").into()
+    }
+
+    /// Creates an OverflowError for shift count exceeding integer size.
+    ///
+    /// Matches CPython's format: `OverflowError: Python int too large to convert to C ssize_t`
+    /// Note: CPython uses this message because it tries to convert to ssize_t for the shift amount.
+    #[must_use]
+    pub fn overflow_shift_count() -> RunError {
+        exc_static!(Self::OverflowError; "Python int too large to convert to C ssize_t").into()
+    }
+
     /// Generates a consistent error for invalid `**kwargs` types.
     #[must_use]
     pub fn kwargs_type_error(callable_name: Option<&str>, type_: Type) -> SimpleException {
@@ -592,6 +657,37 @@ impl ExcType {
             None => format!("got multiple values for keyword argument '{key}'"),
         };
         SimpleException::new(ExcType::TypeError, Some(message))
+    }
+
+    /// Creates a TypeError for unsupported binary operations.
+    ///
+    /// For `+` or `+=` with str/list on the left side, uses CPython's special format:
+    /// `can only concatenate {type} (not "{other}") to {type}`
+    ///
+    /// For other cases, uses the generic format:
+    /// `unsupported operand type(s) for {op}: '{left}' and '{right}'`
+    #[must_use]
+    pub fn binary_type_error(op: &str, lhs_type: Type, rhs_type: Type) -> RunError {
+        let message = if (op == "+" || op == "+=") && (lhs_type == Type::Str || lhs_type == Type::List) {
+            format!("can only concatenate {lhs_type} (not \"{rhs_type}\") to {lhs_type}")
+        } else {
+            format!("unsupported operand type(s) for {op}: '{lhs_type}' and '{rhs_type}'")
+        };
+        exc_fmt!(Self::TypeError; "{message}").into()
+    }
+
+    /// Creates a TypeError for unsupported unary operations.
+    ///
+    /// Uses CPython's format: `bad operand type for unary {op}: '{type}'`
+    #[must_use]
+    pub fn unary_type_error(op: &str, value_type: Type) -> RunError {
+        exc_fmt!(Self::TypeError; "bad operand type for unary {op}: '{value_type}'").into()
+    }
+
+    #[must_use]
+    pub fn cmp_type_error<T>(op: &CmpOperator, left_type: Type, right_type: Type) -> RunError {
+        exc_fmt!(ExcType::TypeError; "'{op}' not supported between instances of '{left_type}' and '{right_type}'")
+            .into()
     }
 }
 
@@ -670,6 +766,7 @@ impl SimpleException {
         ExceptionRaise {
             exc: self,
             frame: Some(frame),
+            hide_caret: false,
         }
     }
 
@@ -677,68 +774,8 @@ impl SimpleException {
         ExceptionRaise {
             exc: self,
             frame: Some(RawStackFrame::from_position(position)),
+            hide_caret: false,
         }
-    }
-
-    /// Creates a TypeError for binary operator type mismatches.
-    ///
-    /// For `+` with str/list on the left side, uses CPython's special format:
-    /// `can only concatenate {type} (not "{other}") to {type}`
-    ///
-    /// For other cases, uses the generic format:
-    /// `unsupported operand type(s) for {op}: '{left}' and '{right}'`
-    pub(crate) fn operand_type_error<T>(
-        left: &ExprLoc,
-        op: &Operator,
-        right: &ExprLoc,
-        left_type: Type,
-        right_type: Type,
-    ) -> RunResult<T> {
-        let new_position = left.position.extend(&right.position);
-
-        // CPython uses a special message for str/list + operations
-        let message = if *op == Operator::Add && (left_type == Type::Str || left_type == Type::List) {
-            format!("can only concatenate {left_type} (not \"{right_type}\") to {left_type}")
-        } else {
-            format!("unsupported operand type(s) for {op}: '{left_type}' and '{right_type}'")
-        };
-
-        Err(SimpleException::new(ExcType::TypeError, Some(message))
-            .with_position(new_position)
-            .into())
-    }
-
-    pub(crate) fn cmp_type_error<T>(
-        left: &ExprLoc,
-        op: &CmpOperator,
-        right: &ExprLoc,
-        left_type: Type,
-        right_type: Type,
-    ) -> RunResult<T> {
-        let new_position = left.position.extend(&right.position);
-
-        let e =
-            exc_fmt!(ExcType::TypeError; "'{op}' not supported between instances of '{left_type}' and '{right_type}'");
-
-        Err(e.with_position(new_position).into())
-    }
-
-    /// Creates a TypeError for augmented assignment operator type mismatches (e.g., `+=`).
-    ///
-    /// For `+=` with str/list on the left side, uses CPython's special format:
-    /// `can only concatenate {type} (not "{other}") to {type}`
-    ///
-    /// For other cases, uses the generic format:
-    /// `unsupported operand type(s) for {op}: '{left}' and '{right}'`
-    ///
-    /// Returns a `SimpleException` without frame info - caller should add the frame.
-    pub(crate) fn augmented_assign_type_error(op: &Operator, left_type: Type, right_type: Type) -> Self {
-        let message = if *op == Operator::Add && (left_type == Type::Str || left_type == Type::List) {
-            format!("can only concatenate {left_type} (not \"{right_type}\") to {left_type}")
-        } else {
-            format!("unsupported operand type(s) for {op}: '{left_type}' and '{right_type}'")
-        };
-        Self::new(ExcType::TypeError, Some(message))
     }
 }
 
@@ -756,13 +793,6 @@ macro_rules! exc_fmt {
 }
 pub(crate) use exc_fmt;
 
-macro_rules! exc_err_static {
-    ($error_type:expr; $msg:expr) => {
-        Err(crate::exception_private::exc_static!($error_type; $msg).into())
-    };
-}
-pub(crate) use exc_err_static;
-
 // TODO remove this, we should always set position before creating the Err
 macro_rules! exc_err_fmt {
     ($error_type:expr; $($fmt_args:tt)*) => {
@@ -777,11 +807,22 @@ pub struct ExceptionRaise {
     pub exc: SimpleException,
     /// The stack frame where the exception was raised (first in vec is closest "bottom" frame).
     pub frame: Option<RawStackFrame>,
+    /// Whether to hide the caret marker when creating the stack frame.
+    ///
+    /// CPython doesn't show carets for attribute GET errors, but does show them
+    /// for attribute SET errors. This flag allows error creators to specify
+    /// whether the caret should be hidden.
+    #[serde(default)]
+    pub hide_caret: bool,
 }
 
 impl From<SimpleException> for ExceptionRaise {
     fn from(exc: SimpleException) -> Self {
-        ExceptionRaise { exc, frame: None }
+        ExceptionRaise {
+            exc,
+            frame: None,
+            hide_caret: false,
+        }
     }
 }
 
@@ -790,6 +831,7 @@ impl From<MontyException> for ExceptionRaise {
         Self {
             exc: exc.into(),
             frame: None,
+            hide_caret: false,
         }
     }
 }
@@ -815,13 +857,6 @@ impl ExceptionRaise {
     /// the function name, which gets filled in as the error propagates.
     pub(crate) fn add_caller_frame(&mut self, position: CodeRange, name: StringId) {
         self.add_caller_frame_inner(position, name, false);
-    }
-
-    /// Like `add_caller_frame`, but suppresses caret display in the traceback.
-    ///
-    /// Used for errors where CPython doesn't show carets (e.g., AttributeError).
-    pub(crate) fn add_caller_frame_no_caret(&mut self, position: CodeRange, name: StringId) {
-        self.add_caller_frame_inner(position, name, true);
     }
 
     fn add_caller_frame_inner(&mut self, position: CodeRange, name: StringId, hide_caret: bool) {
@@ -960,6 +995,16 @@ impl From<MontyException> for RunError {
     }
 }
 
+impl From<FormatError> for RunError {
+    fn from(err: FormatError) -> Self {
+        let exc_type = match &err {
+            FormatError::Overflow(_) => ExcType::OverflowError,
+            FormatError::InvalidAlignment(_) | FormatError::ValueError(_) => ExcType::ValueError,
+        };
+        Self::Exc(SimpleException::new(exc_type, Some(err.to_string())).into())
+    }
+}
+
 impl RunError {
     /// Converts this runtime error to a `MontyException` for the public API.
     ///
@@ -974,24 +1019,6 @@ impl RunError {
 
     pub fn internal(msg: impl Into<Cow<'static, str>>) -> Self {
         Self::Internal(msg.into())
-    }
-
-    /// Sets the frame on the exception.
-    ///
-    /// Used when an exception is raised from code that doesn't have access to position
-    /// information (like `ForIterator::for_next`) but the caller does.
-    pub(crate) fn set_frame(self, frame: RawStackFrame) -> Self {
-        match self {
-            Self::Exc(mut exc) => {
-                exc.frame = Some(frame);
-                Self::Exc(exc)
-            }
-            Self::UncatchableExc(mut exc) => {
-                exc.frame = Some(frame);
-                Self::UncatchableExc(exc)
-            }
-            Self::Internal(_) => self, // Internal errors don't have frames
-        }
     }
 }
 

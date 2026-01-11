@@ -9,16 +9,66 @@
 //!
 //! For constructors like `list()` and `tuple()`, use `ForIterator::new()` followed
 //! by `collect()` to materialize all items into a Vec.
+//!
+//! ## Efficient Iteration with `IterState`
+//!
+//! For the VM's `ForIter` opcode, we use a two-phase approach to avoid borrow conflicts:
+//! 1. `iter_state()` - reads current state without mutation, returns `IterState`
+//! 2. `advance()` - updates the index after the caller has done its work
+//!
+//! This allows `Heap::advance_iterator()` to coordinate access without extracting
+//! the iterator from the heap (avoiding `std::mem::replace` overhead).
 
 use crate::{
-    exception_private::ExcType,
+    exception_private::{ExcType, RunResult},
     heap::{Heap, HeapData, HeapId},
     intern::{BytesId, Interns},
     resource::ResourceTracker,
-    run_frame::RunResult,
     types::{PyTrait, Range, Str},
     value::Value,
 };
+
+/// Snapshot of iterator state needed to produce the next value.
+///
+/// This enum captures all data needed to get the next item from an iterator
+/// WITHOUT holding a borrow on the iterator. This enables a two-phase approach:
+/// 1. Read `IterState` from iterator (immutable borrow ends)
+/// 2. Use the state to get the value (may access other heap objects)
+/// 3. Call `advance()` to update the iterator index
+///
+/// For types that yield values directly (Range, IterStr), the value is included.
+/// For types that need heap access (List, Tuple, etc.), indices are provided.
+#[derive(Debug, Clone, Copy)]
+pub enum IterState {
+    /// Iterator is exhausted, no more values.
+    Exhausted,
+    /// Range iterator yields this integer value.
+    Range(i64),
+    /// List iterator needs to read item at this index from the list.
+    List { list_id: HeapId, index: usize },
+    /// Tuple iterator needs to read item at this index.
+    Tuple { tuple_id: HeapId, index: usize },
+    /// Dict iterator needs to read key at this index; check len for mutation.
+    DictKeys {
+        dict_id: HeapId,
+        index: usize,
+        expected_len: usize,
+    },
+    /// String iterator yields this character; char_len is UTF-8 byte length for advance().
+    IterStr { char: char, char_len: usize },
+    /// Heap bytes iterator needs to read byte at this index.
+    HeapBytes { bytes_id: HeapId, index: usize },
+    /// Interned bytes iterator needs to read byte at this index.
+    InternBytes { bytes_id: BytesId, index: usize },
+    /// Set iterator needs to read value at this index; check len for mutation.
+    Set {
+        set_id: HeapId,
+        index: usize,
+        expected_len: usize,
+    },
+    /// FrozenSet iterator needs to read value at this index.
+    FrozenSet { frozenset_id: HeapId, index: usize },
+}
 
 /// Iterator state for Python for loops.
 ///
@@ -76,6 +126,164 @@ impl ForIterator {
 
     pub fn drop_with_heap(self, heap: &mut Heap<impl ResourceTracker>) {
         self.value.drop_with_heap(heap);
+    }
+
+    /// Creates a placeholder iterator for use during heap manipulation.
+    ///
+    /// This is used by the VM's ForIter opcode when we need to temporarily
+    /// remove an iterator from the heap (using `std::mem::replace`) to avoid
+    /// borrow conflicts while calling `for_next()`.
+    ///
+    /// The placeholder is an exhausted Range iterator that yields no values.
+    pub fn placeholder() -> Self {
+        Self {
+            index: 0,
+            iter_value: ForIterValue::Range {
+                start: 0,
+                step: 1,
+                len: 0,
+            },
+            value: Value::None,
+        }
+    }
+
+    /// Collects HeapIds from this iterator for reference counting cleanup.
+    pub fn py_dec_ref_ids(&mut self, stack: &mut Vec<HeapId>) {
+        self.value.py_dec_ref_ids(stack);
+    }
+
+    /// Returns a reference to the underlying value being iterated.
+    ///
+    /// Used by GC to traverse heap references held by the iterator.
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
+    /// Returns the current iterator state without mutation.
+    ///
+    /// This is phase 1 of the two-phase iteration approach used by `Heap::advance_iterator()`.
+    /// The returned `IterState` captures all data needed to produce the next value.
+    /// After using the state, call `advance()` to update the iterator.
+    ///
+    /// Returns `IterState::Exhausted` if the iterator has no more values.
+    pub fn iter_state(&self) -> IterState {
+        match &self.iter_value {
+            ForIterValue::Range { start, step, len } => {
+                if self.index >= *len {
+                    IterState::Exhausted
+                } else {
+                    let value = *start + (self.index as i64) * *step;
+                    IterState::Range(value)
+                }
+            }
+            ForIterValue::List { heap_id } => {
+                // Note: List length is checked later in Heap::advance_iterator
+                // because lists can be mutated during iteration
+                IterState::List {
+                    list_id: *heap_id,
+                    index: self.index,
+                }
+            }
+            ForIterValue::Tuple { heap_id, len } => {
+                if self.index >= *len {
+                    IterState::Exhausted
+                } else {
+                    IterState::Tuple {
+                        tuple_id: *heap_id,
+                        index: self.index,
+                    }
+                }
+            }
+            ForIterValue::DictKeys { heap_id, len } => {
+                if self.index >= *len {
+                    IterState::Exhausted
+                } else {
+                    IterState::DictKeys {
+                        dict_id: *heap_id,
+                        index: self.index,
+                        expected_len: *len,
+                    }
+                }
+            }
+            ForIterValue::IterStr {
+                string,
+                byte_offset,
+                len,
+            } => {
+                if self.index >= *len {
+                    IterState::Exhausted
+                } else {
+                    // Get the next character at current byte offset
+                    let c = string[*byte_offset..]
+                        .chars()
+                        .next()
+                        .expect("index < len implies char exists");
+                    IterState::IterStr {
+                        char: c,
+                        char_len: c.len_utf8(),
+                    }
+                }
+            }
+            ForIterValue::HeapBytes { heap_id, len } => {
+                if self.index >= *len {
+                    IterState::Exhausted
+                } else {
+                    IterState::HeapBytes {
+                        bytes_id: *heap_id,
+                        index: self.index,
+                    }
+                }
+            }
+            ForIterValue::InternBytes { bytes_id, len } => {
+                if self.index >= *len {
+                    IterState::Exhausted
+                } else {
+                    IterState::InternBytes {
+                        bytes_id: *bytes_id,
+                        index: self.index,
+                    }
+                }
+            }
+            ForIterValue::Set { heap_id, len } => {
+                if self.index >= *len {
+                    IterState::Exhausted
+                } else {
+                    IterState::Set {
+                        set_id: *heap_id,
+                        index: self.index,
+                        expected_len: *len,
+                    }
+                }
+            }
+            ForIterValue::FrozenSet { heap_id, len } => {
+                if self.index >= *len {
+                    IterState::Exhausted
+                } else {
+                    IterState::FrozenSet {
+                        frozenset_id: *heap_id,
+                        index: self.index,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Advances the iterator by one step.
+    ///
+    /// This is phase 2 of the two-phase iteration approach. Call this after
+    /// successfully retrieving the value using the data from `iter_state()`.
+    ///
+    /// For string iterators, `string_char_len` must be provided (the UTF-8 byte
+    /// length of the character that was just yielded) to update the byte offset.
+    /// For other iterator types, pass `None`.
+    #[inline]
+    pub fn advance(&mut self, string_char_len: Option<usize>) {
+        self.index += 1;
+        if let Some(char_len) = string_char_len {
+            if let ForIterValue::IterStr { byte_offset, .. } = &mut self.iter_value {
+                *byte_offset += char_len;
+            }
+        }
     }
 
     /// Returns the next item from the iterator, advancing the internal index.
@@ -414,12 +622,13 @@ impl ForIterValue {
                 len: frozenset.len(),
             }),
             HeapData::Range(range) => Some(Self::from_range(range)),
-            // Closures, FunctionDefaults, Cells, Exceptions, and Dataclasses are not iterable
+            // Closures, FunctionDefaults, Cells, Exceptions, Dataclasses, and Iterators are not iterable
             HeapData::Closure(_, _, _)
             | HeapData::FunctionDefaults(_, _)
             | HeapData::Cell(_)
             | HeapData::Exception(_)
-            | HeapData::Dataclass(_) => None,
+            | HeapData::Dataclass(_)
+            | HeapData::Iterator(_) => None,
         }
     }
 }

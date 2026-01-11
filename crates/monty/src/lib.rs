@@ -1,8 +1,8 @@
 #![doc = include_str!("../../../README.md")]
 mod args;
 mod builtins;
+mod bytecode;
 mod callable;
-mod evaluate;
 mod exception_private;
 mod exception_public;
 mod expressions;
@@ -19,9 +19,7 @@ mod parse;
 mod prepare;
 mod resource;
 mod run;
-mod run_frame;
 mod signature;
-mod snapshot;
 mod types;
 mod value;
 

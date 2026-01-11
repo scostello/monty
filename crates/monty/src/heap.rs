@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::hash_map::DefaultHasher,
     fmt::Write,
     hash::{Hash, Hasher},
@@ -9,10 +10,10 @@ use ahash::AHashSet;
 
 use crate::{
     args::ArgValues,
-    exception_private::{ExcType, SimpleException},
+    exception_private::{ExcType, RunResult, SimpleException},
+    for_iterator::{ForIterator, IterState},
     intern::{FunctionId, Interns},
     resource::{ResourceError, ResourceTracker},
-    run_frame::RunResult,
     types::{Bytes, Dataclass, Dict, FrozenSet, List, PyTrait, Range, Set, Str, Tuple, Type},
     value::{Attr, Value},
 };
@@ -81,6 +82,11 @@ pub enum HeapData {
     /// Contains a class name, a Dict of field name -> value mappings, and a set
     /// of method names that trigger external function calls when invoked.
     Dataclass(Dataclass),
+    /// An iterator for for-loop iteration.
+    ///
+    /// Created by the `GetIter` opcode, advanced by `ForIter`. Stores iteration
+    /// state for lists, tuples, strings, ranges, dicts, and sets.
+    Iterator(ForIterator),
 }
 
 impl HeapData {
@@ -136,9 +142,11 @@ impl HeapData {
             }
             // Dataclass hashability depends on the mutable flag
             Self::Dataclass(dc) => dc.compute_hash(heap, interns),
-            // Mutable types and exceptions cannot be hashed
+            // Mutable types, exceptions, and iterators cannot be hashed
             // (Cell is handled specially in get_or_compute_hash)
-            Self::List(_) | Self::Dict(_) | Self::Set(_) | Self::Cell(_) | Self::Exception(_) => None,
+            Self::List(_) | Self::Dict(_) | Self::Set(_) | Self::Cell(_) | Self::Exception(_) | Self::Iterator(_) => {
+                None
+            }
         }
     }
 }
@@ -162,6 +170,7 @@ impl PyTrait for HeapData {
             Self::Range(_) => Type::Range,
             Self::Exception(e) => e.py_type(),
             Self::Dataclass(dc) => dc.py_type(heap),
+            Self::Iterator(_) => Type::Iterator,
         }
     }
 
@@ -180,6 +189,7 @@ impl PyTrait for HeapData {
             Self::Range(_) => std::mem::size_of::<Range>(),
             Self::Exception(e) => std::mem::size_of::<SimpleException>() + e.arg().map_or(0, String::len),
             Self::Dataclass(dc) => dc.py_estimate_size(),
+            Self::Iterator(_) => std::mem::size_of::<ForIterator>(),
         }
     }
 
@@ -193,12 +203,13 @@ impl PyTrait for HeapData {
             Self::Set(s) => PyTrait::py_len(s, heap, interns),
             Self::FrozenSet(fs) => PyTrait::py_len(fs, heap, interns),
             Self::Range(r) => Some(r.len()),
-            // Cells, Exceptions, and Dataclasses don't have length
+            // Cells, Exceptions, Dataclasses, and Iterators don't have length
             Self::Cell(_)
             | Self::Closure(_, _, _)
             | Self::FunctionDefaults(_, _)
             | Self::Exception(_)
-            | Self::Dataclass(_) => None,
+            | Self::Dataclass(_)
+            | Self::Iterator(_) => None,
         }
     }
 
@@ -215,8 +226,10 @@ impl PyTrait for HeapData {
             (Self::FunctionDefaults(a_id, _), Self::FunctionDefaults(b_id, _)) => *a_id == *b_id,
             (Self::Range(a), Self::Range(b)) => a.py_eq(b, heap, interns),
             (Self::Dataclass(a), Self::Dataclass(b)) => a.py_eq(b, heap, interns),
-            // Cells and Exceptions compare by identity only (handled at Value level via HeapId comparison)
-            (Self::Cell(_), Self::Cell(_)) | (Self::Exception(_), Self::Exception(_)) => false,
+            // Cells, Exceptions, and Iterators compare by identity only (handled at Value level via HeapId comparison)
+            (Self::Cell(_), Self::Cell(_))
+            | (Self::Exception(_), Self::Exception(_))
+            | (Self::Iterator(_), Self::Iterator(_)) => false,
             _ => false, // Different types are never equal
         }
     }
@@ -246,6 +259,7 @@ impl PyTrait for HeapData {
             }
             Self::Cell(v) => v.py_dec_ref_ids(stack),
             Self::Dataclass(dc) => dc.py_dec_ref_ids(stack),
+            Self::Iterator(iter) => iter.py_dec_ref_ids(stack),
             // Range and Exception have no nested heap references
             Self::Range(_) | Self::Exception(_) => {}
         }
@@ -265,6 +279,7 @@ impl PyTrait for HeapData {
             Self::Range(r) => r.py_bool(heap, interns),
             Self::Exception(_) => true, // Exceptions are always truthy
             Self::Dataclass(dc) => dc.py_bool(heap, interns),
+            Self::Iterator(_) => true, // Iterators are always truthy
         }
     }
 
@@ -291,9 +306,18 @@ impl PyTrait for HeapData {
             Self::Range(r) => r.py_repr_fmt(f, heap, heap_ids, interns),
             Self::Exception(e) => e.py_repr_fmt(f),
             Self::Dataclass(dc) => dc.py_repr_fmt(f, heap, heap_ids, interns),
+            Self::Iterator(_) => write!(f, "<iterator>"),
         }
     }
-    // py_str is always the same as py_repr which is the default impl
+
+    fn py_str(&self, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> Cow<'static, str> {
+        match self {
+            // Strings return their value directly without quotes
+            Self::Str(s) => s.py_str(heap, interns),
+            // All other types use repr
+            _ => self.py_repr(heap, interns),
+        }
+    }
 
     fn py_add(
         &self,
@@ -457,8 +481,12 @@ impl HashState {
                     Self::Unhashable
                 }
             }
-            // Mutable containers and exceptions are unhashable
-            HeapData::List(_) | HeapData::Dict(_) | HeapData::Set(_) | HeapData::Exception(_) => Self::Unhashable,
+            // Mutable containers, exceptions, and iterators are unhashable
+            HeapData::List(_)
+            | HeapData::Dict(_)
+            | HeapData::Set(_)
+            | HeapData::Exception(_)
+            | HeapData::Iterator(_) => Self::Unhashable,
         }
     }
 }
@@ -705,6 +733,145 @@ impl<T: ResourceTracker> Heap<T> {
             .expect("Heap::get_mut: data currently borrowed")
     }
 
+    /// Advances an iterator stored on the heap and returns the next value.
+    ///
+    /// This method uses a two-phase approach to avoid borrow conflicts:
+    /// 1. Read iterator state (immutable borrow ends)
+    /// 2. Based on state, get the value (may access other heap objects)
+    /// 3. Update iterator index (mutable borrow)
+    ///
+    /// This is more efficient than `std::mem::replace` with a placeholder because
+    /// it avoids creating and moving placeholder objects on every iteration.
+    ///
+    /// Returns `Ok(None)` when the iterator is exhausted.
+    /// Returns `Err` for dict/set size changes or allocation failures.
+    pub fn advance_iterator(&mut self, iter_id: HeapId, interns: &Interns) -> RunResult<Option<Value>> {
+        // Phase 1: Get iterator state (immutable borrow ends after this block)
+        let HeapData::Iterator(iter) = self.get(iter_id) else {
+            panic!("advance_iterator: expected Iterator on heap");
+        };
+        let state = iter.iter_state();
+
+        // Phase 2: Based on state, get the value and determine char_len for strings
+        let (value, string_char_len) = match state {
+            IterState::Exhausted => return Ok(None),
+            IterState::Range(value) => (Value::Int(value), None),
+            IterState::List { list_id, index } => {
+                // Get item from list (immutable borrow)
+                let HeapData::List(list) = self.get(list_id) else {
+                    panic!("advance_iterator: expected List on heap");
+                };
+                // Check if list shrunk during iteration
+                if index >= list.len() {
+                    return Ok(None);
+                }
+                let item = list.as_vec()[index].copy_for_extend();
+
+                // Inc refcount after borrow ends
+                if let Value::Ref(id) = &item {
+                    self.inc_ref(*id);
+                }
+                (item, None)
+            }
+
+            IterState::Tuple { tuple_id, index } => {
+                let HeapData::Tuple(tuple) = self.get(tuple_id) else {
+                    panic!("advance_iterator: expected Tuple on heap");
+                };
+                let item = tuple.as_vec()[index].copy_for_extend();
+                if let Value::Ref(id) = &item {
+                    self.inc_ref(*id);
+                }
+                (item, None)
+            }
+
+            IterState::DictKeys {
+                dict_id,
+                index,
+                expected_len,
+            } => {
+                let HeapData::Dict(dict) = self.get(dict_id) else {
+                    panic!("advance_iterator: expected Dict on heap");
+                };
+                // Check for dict mutation
+                if dict.len() != expected_len {
+                    return Err(ExcType::runtime_error_dict_changed_size());
+                }
+                let key = dict.key_at(index).expect("index should be valid").copy_for_extend();
+                if let Value::Ref(id) = &key {
+                    self.inc_ref(*id);
+                }
+                (key, None)
+            }
+
+            IterState::IterStr { char, char_len } => {
+                // Allocate a new single-character string on the heap
+                let char_str = char.to_string();
+                let char_id = self.allocate(HeapData::Str(Str::new(char_str)))?;
+                (Value::Ref(char_id), Some(char_len))
+            }
+
+            IterState::HeapBytes { bytes_id, index } => {
+                let HeapData::Bytes(bytes) = self.get(bytes_id) else {
+                    panic!("advance_iterator: expected Bytes on heap");
+                };
+                let byte_val = i64::from(bytes.as_slice()[index]);
+                (Value::Int(byte_val), None)
+            }
+
+            IterState::InternBytes { bytes_id, index } => {
+                let bytes = interns.get_bytes(bytes_id);
+                (Value::Int(i64::from(bytes[index])), None)
+            }
+
+            IterState::Set {
+                set_id,
+                index,
+                expected_len,
+            } => {
+                let HeapData::Set(set) = self.get(set_id) else {
+                    panic!("advance_iterator: expected Set on heap");
+                };
+                // Check for set mutation
+                if set.len() != expected_len {
+                    return Err(ExcType::runtime_error_set_changed_size());
+                }
+                let item = set
+                    .storage()
+                    .value_at(index)
+                    .expect("index should be valid")
+                    .copy_for_extend();
+                if let Value::Ref(id) = &item {
+                    self.inc_ref(*id);
+                }
+                (item, None)
+            }
+
+            IterState::FrozenSet { frozenset_id, index } => {
+                let HeapData::FrozenSet(frozenset) = self.get(frozenset_id) else {
+                    panic!("advance_iterator: expected FrozenSet on heap");
+                };
+                let item = frozenset
+                    .storage()
+                    .value_at(index)
+                    .expect("index should be valid")
+                    .copy_for_extend();
+                if let Value::Ref(id) = &item {
+                    self.inc_ref(*id);
+                }
+                (item, None)
+            }
+        };
+
+        // Phase 3: Advance the iterator
+        let HeapData::Iterator(iter) = self.get_mut(iter_id) else {
+            panic!("advance_iterator: expected Iterator on heap");
+        };
+        iter.advance(string_char_len);
+
+        Ok(Some(value))
+    }
+
     /// Returns or computes the hash for the heap entry at the given ID.
     ///
     /// Hashes are computed lazily on first use and then cached. Returns
@@ -941,10 +1108,7 @@ impl<T: ResourceTracker> Heap<T> {
         let success = if let HeapData::List(list) = &source_data {
             // Copy items and track which refs need incrementing
             let items: Vec<Value> = list.as_vec().iter().map(Value::copy_for_extend).collect();
-            let ref_ids: Vec<HeapId> = items
-                .iter()
-                .filter_map(|obj| if let Value::Ref(id) = obj { Some(*id) } else { None })
-                .collect();
+            let ref_ids: Vec<HeapId> = items.iter().filter_map(Value::ref_id).collect();
 
             // Restore source data before mutating heap (inc_ref needs it)
             restore_data!(self, source_id, source_data, "iadd_extend_list");
@@ -1002,10 +1166,7 @@ impl<T: ResourceTracker> Heap<T> {
                 } else {
                     // Copy items and track which refs need incrementing
                     let items: Vec<Value> = list.as_vec().iter().map(Value::copy_for_extend).collect();
-                    let ref_ids: Vec<HeapId> = items
-                        .iter()
-                        .filter_map(|v| if let Value::Ref(id) = v { Some(*id) } else { None })
-                        .collect();
+                    let ref_ids: Vec<HeapId> = items.iter().filter_map(Value::ref_id).collect();
                     let original_len = items.len();
 
                     // Restore data before heap operations
@@ -1046,10 +1207,7 @@ impl<T: ResourceTracker> Heap<T> {
                 } else {
                     // Copy items and track which refs need incrementing
                     let items: Vec<Value> = tuple.as_vec().iter().map(Value::copy_for_extend).collect();
-                    let ref_ids: Vec<HeapId> = items
-                        .iter()
-                        .filter_map(|v| if let Value::Ref(id) = v { Some(*id) } else { None })
-                        .collect();
+                    let ref_ids: Vec<HeapId> = items.iter().filter_map(Value::ref_id).collect();
                     let original_len = items.len();
 
                     // Restore data before heap operations
@@ -1233,6 +1391,12 @@ impl<T: ResourceTracker> Heap<T> {
                     if let Value::Ref(id) = v {
                         work_list.push(*id);
                     }
+                }
+            }
+            HeapData::Iterator(iter) => {
+                // Iterator holds a reference to the iterable being iterated
+                if let Value::Ref(id) = iter.value() {
+                    work_list.push(*id);
                 }
             }
         }

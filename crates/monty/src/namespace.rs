@@ -1,14 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    exception_private::{ExcType, ExceptionRaise, RunError},
-    expressions::{Identifier, NameScope},
+    exception_private::ExceptionRaise,
     heap::{Heap, HeapId},
-    intern::Interns,
     parse::CodeRange,
     resource::{ResourceError, ResourceTracker},
-    run_frame::RunResult,
-    snapshot::ArgumentCache,
     value::Value,
 };
 
@@ -22,8 +18,10 @@ impl NamespaceId {
     }
 
     /// Returns the raw index value.
+    ///
+    /// Used by the bytecode compiler to emit slot indices for variable access.
     #[inline]
-    fn index(self) -> usize {
+    pub fn index(self) -> usize {
         self.0 as usize
     }
 }
@@ -44,16 +42,13 @@ impl Namespace {
         &self.0[index.index()]
     }
 
+    #[cfg(feature = "ref-count-return")]
     pub fn get_opt(&self, index: NamespaceId) -> Option<&Value> {
         self.0.get(index.index())
     }
 
     pub fn get_mut(&mut self, index: NamespaceId) -> &mut Value {
         &mut self.0[index.index()]
-    }
-
-    pub fn set(&mut self, index: NamespaceId, value: Value) {
-        self.0[index.index()] = value;
     }
 
     pub fn mut_vec(&mut self) -> &mut Vec<Value> {
@@ -111,12 +106,6 @@ pub struct Namespaces {
     /// When set, the next call to `take_ext_return_value` will return this error,
     /// allowing it to propagate through try/except blocks.
     ext_exception: Option<ExceptionRaise>,
-    /// Cached partially-evaluated arguments from when an external call suspended.
-    ///
-    /// When evaluating arguments for a call and one of them triggers an external call,
-    /// we cache the already-evaluated arguments here. On resume, we restore from this
-    /// cache instead of re-evaluating arguments (which would cause duplicate side effects).
-    argument_cache: Option<ArgumentCache>,
     /// Cached return values from user-defined functions that completed after internal external calls.
     ///
     /// Unlike `ext_return_values` which uses index-based lookup for external calls, this map
@@ -137,245 +126,8 @@ impl Namespaces {
             ext_return_values: vec![],
             next_ext_return_value: 0,
             ext_exception: None,
-            argument_cache: None,
             func_return_values: HashMap::new(),
         }
-    }
-
-    /// Push a return value from an external function call or a completed function.
-    ///
-    /// Also resets the return pointer to zero so we start getting values from the beginning.
-    ///
-    /// # Arguments
-    /// * `call_position` - The position of the call that should receive this value:
-    ///   - `None` for direct external function calls (any call at the right point can consume it)
-    ///   - `Some(pos)` for functions that completed after internal external calls (only the
-    ///     call at that exact position should consume it)
-    /// * `return_value` - The value to cache
-    pub fn push_ext_return_value(&mut self, call_position: Option<CodeRange>, return_value: Value) {
-        // Don't reset index - let values accumulate and be found by position search
-        self.ext_return_values.push((call_position, return_value));
-    }
-
-    /// Sets a pending exception from an external function call.
-    ///
-    /// The next call to `take_ext_return_value` will return this exception as an error,
-    /// allowing it to propagate through try/except blocks.
-    pub fn set_ext_exception(&mut self, exc: ExceptionRaise) {
-        self.next_ext_return_value = 0;
-        self.ext_exception = Some(exc);
-    }
-
-    /// Gets a return value or exception from an external function call.
-    ///
-    /// First checks for a pending exception (set via `set_ext_exception`). If found,
-    /// returns `Err(RunError::Exc(...))` so the exception propagates through try/except.
-    ///
-    /// Otherwise checks `func_return_values` map for a matching position.
-    /// Values are cloned (not removed) so they're available for re-evaluation.
-    /// The map is cleared when function frames complete, handling recursion.
-    ///
-    /// Returns `Ok(Some(Value))` if a matching return value is found, or `Ok(None)` if not.
-    ///
-    /// # Arguments
-    /// * `heap` - The heap for cloning values
-    /// * `current_position` - The position of the call site requesting a cached value
-    pub fn take_ext_return_value(
-        &mut self,
-        heap: &mut Heap<impl ResourceTracker>,
-        current_position: CodeRange,
-    ) -> RunResult<Option<Value>> {
-        // Check for pending exception first
-        if let Some(exc) = self.ext_exception.take() {
-            return Err(RunError::Exc(exc));
-        }
-
-        // Check func_return_values map for exact position match
-        // Clone (don't remove) so the value is available for subsequent re-evaluations
-        if let Some(value) = self.func_return_values.get(&current_position) {
-            return Ok(Some(value.clone_with_heap(heap)));
-        }
-
-        Ok(None)
-    }
-
-    /// Caches a return value from a user-defined function that completed after internal external calls.
-    ///
-    /// Unlike `push_ext_return_value`, this stores the value in a map by position for direct lookup.
-    /// This is used when a function frame completes and needs to cache its return value for the
-    /// caller to find when re-evaluating the call expression.
-    pub fn set_func_return_value(&mut self, call_position: CodeRange, return_value: Value) {
-        self.func_return_values.insert(call_position, return_value);
-    }
-
-    /// Takes a cached return value for a user-defined function call if one exists.
-    ///
-    /// This is used for checking cached return values from user-defined functions BEFORE
-    /// evaluating arguments. When a function containing external calls completes, its return
-    /// value is stored in `func_return_values` by call position.
-    ///
-    /// Returns the cached value if found, removing it from the cache.
-    pub fn take_func_return_value(
-        &mut self,
-        heap: &mut Heap<impl ResourceTracker>,
-        current_position: CodeRange,
-    ) -> Option<Value> {
-        self.func_return_values
-            .remove(&current_position)
-            .map(|v| v.clone_with_heap(heap))
-    }
-
-    /// Gets a cached return value for a call if one exists.
-    ///
-    /// This is used for checking cached return values BEFORE evaluating arguments.
-    /// When a function or external call completes, its return value is stored by position.
-    /// This allows skipping re-evaluation when the same call is encountered during resumption.
-    ///
-    /// Values are stored in `func_return_values` (a map keyed by position) and are NOT
-    /// removed when retrieved. This allows multiple re-evaluations to find the same cached
-    /// value. Values are cleared when appropriate (e.g., when a function completes).
-    pub fn take_ext_return_value_exact(
-        &mut self,
-        heap: &mut Heap<impl ResourceTracker>,
-        current_position: CodeRange,
-    ) -> RunResult<Option<Value>> {
-        // Check for pending exception first
-        if let Some(exc) = self.ext_exception.take() {
-            return Err(RunError::Exc(exc));
-        }
-
-        // Check the func_return_values map - this holds all cached return values by position.
-        // Clone the value (don't remove) so it's available for subsequent re-evaluations.
-        if let Some(value) = self.func_return_values.get(&current_position) {
-            return Ok(Some(value.clone_with_heap(heap)));
-        }
-
-        Ok(None)
-    }
-
-    /// Clears the external return values, exception, and resets the pointer.
-    ///
-    /// This is called in control flow (for loops, if statements) to clear stale return
-    /// values from condition evaluation before entering the body. Does NOT clear
-    /// `func_return_values` or `argument_cache` since those are needed for proper
-    /// function call caching.
-    #[cfg(not(feature = "ref-count-panic"))]
-    pub fn clear_ext_return_values(&mut self, _heap: &mut Heap<impl ResourceTracker>) {
-        self.ext_return_values.clear();
-        self.next_ext_return_value = 0;
-        self.ext_exception = None;
-    }
-
-    /// Version with proper value dropping for ref-count-panic feature.
-    /// See non-feature version for documentation.
-    #[cfg(feature = "ref-count-panic")]
-    pub fn clear_ext_return_values(&mut self, heap: &mut Heap<impl ResourceTracker>) {
-        for (_, value) in &mut self.ext_return_values {
-            let v = std::mem::replace(value, Value::Dereferenced);
-            v.drop_with_heap(heap);
-        }
-        self.ext_return_values.clear();
-        self.next_ext_return_value = 0;
-        self.ext_exception = None;
-    }
-
-    /// Clears all cached values when a function frame completes.
-    ///
-    /// This is called when a function completes to clean up cached values from
-    /// internal external calls. Clears:
-    /// - `ext_return_values` - external call return values
-    /// - `func_return_values` - prevents the caller from seeing the completed function's
-    ///   internal cached values (fixes recursion bug)
-    /// - `argument_cache` - prevents outer recursion levels' cached args from being used
-    ///   by inner levels on resume (fixes argument cache collision in recursion)
-    ///
-    /// The function's return value is stored AFTER this call (in `set_func_return_value`),
-    /// so clearing here is safe - the caller will still find the return value.
-    #[cfg(not(feature = "ref-count-panic"))]
-    pub fn clear_on_function_complete(&mut self, _heap: &mut Heap<impl ResourceTracker>) {
-        self.ext_return_values.clear();
-        self.next_ext_return_value = 0;
-        self.ext_exception = None;
-        self.func_return_values.clear();
-        self.argument_cache = None;
-    }
-
-    /// Version with proper value dropping for ref-count-panic feature.
-    /// See non-feature version for documentation.
-    #[cfg(feature = "ref-count-panic")]
-    pub fn clear_on_function_complete(&mut self, heap: &mut Heap<impl ResourceTracker>) {
-        for (_, value) in &mut self.ext_return_values {
-            let v = std::mem::replace(value, Value::Dereferenced);
-            v.drop_with_heap(heap);
-        }
-        self.ext_return_values.clear();
-        self.next_ext_return_value = 0;
-        self.ext_exception = None;
-        for (_, value) in self.func_return_values.drain() {
-            value.drop_with_heap(heap);
-        }
-        if let Some(cache) = self.argument_cache.take() {
-            for value in cache.evaluated_args {
-                value.drop_with_heap(heap);
-            }
-        }
-    }
-
-    /// Clears all cached return values after a statement completes.
-    ///
-    /// This is called after each statement in iter mode to ensure cached values
-    /// don't persist across statements (e.g., across loop iterations).
-    /// Clears both ext_return_values and func_return_values.
-    #[cfg(not(feature = "ref-count-panic"))]
-    pub fn clear_statement_cache(&mut self, _heap: &mut Heap<impl ResourceTracker>) {
-        self.ext_return_values.clear();
-        self.next_ext_return_value = 0;
-        self.ext_exception = None;
-        self.func_return_values.clear();
-        self.argument_cache = None;
-    }
-
-    /// Clears all cached return values after a statement completes.
-    /// Version with proper value dropping for ref-count-panic feature.
-    #[cfg(feature = "ref-count-panic")]
-    pub fn clear_statement_cache(&mut self, heap: &mut Heap<impl ResourceTracker>) {
-        for (_, value) in &mut self.ext_return_values {
-            let v = std::mem::replace(value, Value::Dereferenced);
-            v.drop_with_heap(heap);
-        }
-        self.ext_return_values.clear();
-        self.next_ext_return_value = 0;
-        self.ext_exception = None;
-        for (_, value) in self.func_return_values.drain() {
-            value.drop_with_heap(heap);
-        }
-        if let Some(cache) = self.argument_cache.take() {
-            for value in cache.evaluated_args {
-                value.drop_with_heap(heap);
-            }
-        }
-    }
-
-    /// Sets the argument cache for partially-evaluated arguments.
-    ///
-    /// Called when an external call suspends during argument evaluation to save
-    /// the already-evaluated arguments for later resumption.
-    pub fn set_argument_cache(&mut self, cache: ArgumentCache) {
-        self.argument_cache = Some(cache);
-    }
-
-    /// Takes the argument cache if it matches the given call position.
-    ///
-    /// Returns the cached partially-evaluated arguments if this is the correct
-    /// call site, allowing resumption without re-evaluating side effects.
-    /// Returns `None` if no cache exists or the position doesn't match.
-    pub fn take_argument_cache(&mut self, call_position: CodeRange) -> Option<ArgumentCache> {
-        if let Some(cache) = &self.argument_cache {
-            if cache.call_position == call_position {
-                return self.argument_cache.take();
-            }
-        }
-        None
     }
 
     /// Gets an immutable slice reference to a namespace by index.
@@ -477,133 +229,8 @@ impl Namespaces {
         for value in std::mem::take(&mut self.func_return_values).into_values() {
             value.drop_with_heap(heap);
         }
-        // Clean up any cached arguments
-        if let Some(cache) = self.argument_cache.take() {
-            for value in cache.evaluated_args {
-                value.drop_with_heap(heap);
-            }
-        }
         // Clear any pending exception
         self.ext_exception = None;
-    }
-
-    /// Looks up a variable by name in the appropriate namespace based on the scope index for mutation.
-    ///
-    /// # Arguments
-    /// * `local_idx` - Index of the local namespace in namespaces
-    /// * `ident` - The identifier to look up (contains heap_id and scope)
-    /// * `interns` - String storage for looking up variable names in error messages
-    ///
-    /// # Returns
-    /// A mutable reference to the Value at the identifier's location, or NameError if undefined.
-    pub fn get_var_mut(
-        &mut self,
-        local_idx: NamespaceId,
-        ident: &Identifier,
-        interns: &Interns,
-    ) -> RunResult<&mut Value> {
-        let ns_idx = match ident.scope {
-            NameScope::Local => local_idx,
-            NameScope::Global => GLOBAL_NS_IDX,
-            NameScope::Cell => {
-                // Cell access should use get_var_value which handles cell dereferencing
-                panic!("Cell access should use get_var_value, not get_var_mut");
-            }
-        };
-        let namespace = self.get_mut(ns_idx);
-
-        if let Some(value) = namespace.0.get_mut(ident.namespace_id().index()) {
-            if !matches!(value, Value::Undefined) {
-                return Ok(value);
-            }
-        }
-        Err(ExcType::name_error(interns.get_str(ident.name_id))
-            .with_position(ident.position)
-            .into())
-    }
-
-    /// Looks up a variable by name in the appropriate namespace based on the scope index.
-    ///
-    /// # Arguments
-    /// * `local_idx` - Index of the local namespace in namespaces
-    /// * `ident` - The identifier to look up (contains heap_id and scope)
-    /// * `interns` - String storage for looking up variable names in error messages
-    ///
-    /// # Returns
-    /// An immutable reference to the Value at the identifier's location, or NameError if undefined.
-    pub fn get_var(&self, local_idx: NamespaceId, ident: &Identifier, interns: &Interns) -> RunResult<&Value> {
-        let ns_idx = match ident.scope {
-            NameScope::Local => local_idx,
-            NameScope::Global => GLOBAL_NS_IDX,
-            NameScope::Cell => {
-                // Cell access should use get_var_value which handles cell dereferencing
-                panic!("Cell access should use get_var_value, not get_var_mut");
-            }
-        };
-        let namespace = self.get(ns_idx);
-
-        if let Some(value) = namespace.0.get(ident.namespace_id().index()) {
-            if !matches!(value, Value::Undefined) {
-                return Ok(value);
-            }
-        }
-        Err(ExcType::name_error(interns.get_str(ident.name_id))
-            .with_position(ident.position)
-            .into())
-    }
-
-    /// Gets a variable's value, handling Local, Global, and Cell scopes.
-    ///
-    /// This is the primary method for reading variable values during expression evaluation.
-    /// It handles all scope types:
-    /// - `Local` - reads directly from the local namespace
-    /// - `Global` - reads directly from the global namespace (index 0)
-    /// - `Cell` - namespace slot contains `Value::Ref(cell_id)`, reads through the cell
-    ///
-    /// # Arguments
-    /// * `local_idx` - Index of the local namespace in namespaces
-    /// * `heap` - The heap for cell access and cloning ref-counted values
-    /// * `ident` - The identifier to look up (contains heap_id and scope)
-    /// * `interns` - String storage for looking up variable names in error messages
-    ///
-    /// # Returns
-    /// A cloned copy of the value (with refcount incremented for Ref values), or NameError if undefined.
-    pub fn get_var_value(
-        &self,
-        local_idx: NamespaceId,
-        heap: &mut Heap<impl ResourceTracker>,
-        ident: &Identifier,
-        interns: &Interns,
-    ) -> RunResult<Value> {
-        // Determine which namespace to use
-        let ns_idx = match ident.scope {
-            NameScope::Global => GLOBAL_NS_IDX,
-            _ => local_idx, // Local and Cell both use local namespace
-        };
-
-        match ident.scope {
-            NameScope::Cell => {
-                // Cell access - namespace slot contains Value::Ref(cell_id)
-                let namespace = &self.stack[ns_idx.index()];
-                if let Value::Ref(cell_id) = namespace.get(ident.namespace_id()) {
-                    let value = heap.get_cell_value(*cell_id);
-                    // Cell may be undefined if accessed before assignment in enclosing scope
-                    if matches!(value, Value::Undefined) {
-                        let name = interns.get_str(ident.name_id);
-                        Err(ExcType::name_error_free_variable(name).into())
-                    } else {
-                        Ok(value)
-                    }
-                } else {
-                    panic!("Cell variable slot doesn't contain a cell reference - prepare-time bug");
-                }
-            }
-            _ => {
-                // Local or Global scope - direct namespace access
-                self.get_var(ns_idx, ident, interns)
-                    .map(|object| object.clone_with_heap(heap))
-            }
-        }
     }
 
     /// Returns the global namespace for final inspection (e.g., ref-count testing).
@@ -621,11 +248,8 @@ impl Namespaces {
     /// This is used by garbage collection to find all root references. Any heap
     /// object reachable from these roots should not be collected.
     pub fn iter_heap_ids(&self) -> impl Iterator<Item = HeapId> + '_ {
-        self.stack.iter().flat_map(|namespace| {
-            namespace
-                .0
-                .iter()
-                .filter_map(|value| if let Value::Ref(id) = value { Some(*id) } else { None })
-        })
+        self.stack
+            .iter()
+            .flat_map(|namespace| namespace.0.iter().filter_map(Value::ref_id))
     }
 }

@@ -1,12 +1,11 @@
 use std::vec::IntoIter;
 
 use crate::{
-    exception_private::ExcType,
+    exception_private::{ExcType, RunResult},
     expressions::{ExprLoc, Identifier},
     heap::Heap,
     intern::{Interns, StringId},
     parse::ParseError,
-    run_frame::RunResult,
     types::Dict,
     value::Value,
     MontyObject, ResourceTracker,
@@ -81,6 +80,25 @@ impl ArgValues {
             Self::Two(v1, v2) => (vec![v1, v2], KwargsValues::Empty),
             Self::Kwargs(kwargs) => (vec![], kwargs),
             Self::ArgsKargs { args, kwargs } => (args, kwargs),
+        }
+    }
+
+    /// Converts arguments into a simple Vec of positional Values.
+    ///
+    /// Note: Kwargs are extracted but not returned. The caller is responsible
+    /// for tracking that no kwargs were passed if needed.
+    pub fn into_vec(self) -> Vec<Value> {
+        match self {
+            Self::Empty => vec![],
+            Self::One(v) => vec![v],
+            Self::Two(v1, v2) => vec![v1, v2],
+            Self::Kwargs(_kwargs) => {
+                // Kwargs only - no positional args
+                // Note: kwargs values are still owned but not returned
+                // This shouldn't happen for external calls in practice
+                vec![]
+            }
+            Self::ArgsKargs { args, kwargs: _ } => args,
         }
     }
 

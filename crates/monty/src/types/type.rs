@@ -2,11 +2,10 @@ use strum::{Display, EnumString, IntoStaticStr};
 
 use crate::{
     args::ArgValues,
-    exception_private::ExcType,
+    exception_private::{ExcType, RunResult},
     heap::Heap,
     intern::Interns,
     resource::ResourceTracker,
-    run_frame::RunResult,
     types::{Bytes, Dict, FrozenSet, List, PyTrait, Range, Set, Str, Tuple},
     value::Value,
 };
@@ -47,6 +46,8 @@ pub enum Type {
     #[strum(serialize = "builtin_function_or_method")]
     BuiltinFunction,
     Cell,
+    #[strum(serialize = "iterator")]
+    Iterator,
     /// used when we can't infer the type, this should be removed or very rare
     Unknown,
 }

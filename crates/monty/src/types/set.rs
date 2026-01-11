@@ -6,12 +6,11 @@ use hashbrown::HashTable;
 use super::PyTrait;
 use crate::{
     args::ArgValues,
-    exception_private::ExcType,
+    exception_private::{ExcType, RunResult},
     for_iterator::ForIterator,
     heap::{Heap, HeapData, HeapId},
     intern::{attr, Interns},
     resource::ResourceTracker,
-    run_frame::RunResult,
     types::Type,
     value::{Attr, Value},
 };
@@ -224,7 +223,7 @@ impl SetStorage {
     }
 
     /// Checks if the set contains a value.
-    fn contains(&self, value: &Value, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> RunResult<bool> {
+    pub fn contains(&self, value: &Value, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> RunResult<bool> {
         let hash = value
             .py_hash(heap, interns)
             .ok_or_else(|| ExcType::type_error_unhashable_set_element(value.py_type(Some(heap))))?;
@@ -519,6 +518,11 @@ impl Set {
     #[must_use]
     pub fn clone_with_heap(&self, heap: &mut Heap<impl ResourceTracker>) -> Self {
         Self(self.0.clone_with_heap(heap))
+    }
+
+    /// Checks if the set contains a value.
+    pub fn contains(&self, value: &Value, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> RunResult<bool> {
+        self.0.contains(value, heap, interns)
     }
 
     /// Returns the internal storage (for set operations between Set and FrozenSet).
@@ -991,6 +995,11 @@ impl FrozenSet {
     /// Returns the internal storage.
     pub(crate) fn storage(&self) -> &SetStorage {
         &self.0
+    }
+
+    /// Checks if the frozenset contains a value.
+    pub fn contains(&self, value: &Value, heap: &mut Heap<impl ResourceTracker>, interns: &Interns) -> RunResult<bool> {
+        self.0.contains(value, heap, interns)
     }
 
     /// Computes the hash of this frozenset.

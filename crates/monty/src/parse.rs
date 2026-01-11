@@ -204,7 +204,7 @@ impl<'a> Parser<'a> {
                 line_ends.push(i);
             }
         }
-        let mut interner = InternerBuilder::new();
+        let mut interner = InternerBuilder::new(code);
         let filename_id = interner.intern(filename);
         Self {
             line_ends,
@@ -786,10 +786,11 @@ impl<'a> Parser<'a> {
         for fstring_part in &value {
             match fstring_part {
                 ast::FStringPart::Literal(lit) => {
-                    // Literal string segment
+                    // Literal string segment - intern for use at runtime
                     let processed = lit.value.to_string();
                     if !processed.is_empty() {
-                        parts.push(FStringPart::Literal(processed));
+                        let string_id = self.interner.intern(&processed);
+                        parts.push(FStringPart::Literal(string_id));
                     }
                 }
                 ast::FStringPart::FString(fstring) => {
@@ -804,8 +805,7 @@ impl<'a> Parser<'a> {
 
         // Optimization: if only one literal part, return as simple string literal
         if parts.len() == 1 {
-            if let FStringPart::Literal(s) = &parts[0] {
-                let string_id = self.interner.intern(s);
+            if let FStringPart::Literal(string_id) = parts[0] {
                 return Ok(ExprLoc::new(
                     self.convert_range(range),
                     Expr::Literal(Literal::Str(string_id)),
@@ -820,9 +820,10 @@ impl<'a> Parser<'a> {
     fn parse_fstring_element(&mut self, element: &InterpolatedStringElement) -> Result<FStringPart, ParseError> {
         match element {
             InterpolatedStringElement::Literal(lit) => {
-                // Convert to owned String
+                // Intern the literal string for use at runtime
                 let processed = lit.value.to_string();
-                Ok(FStringPart::Literal(processed))
+                let string_id = self.interner.intern(&processed);
+                Ok(FStringPart::Literal(string_id))
             }
             InterpolatedStringElement::Interpolation(interp) => {
                 let expr = Box::new(self.parse_expression((*interp.expression).clone())?);
@@ -858,9 +859,10 @@ impl<'a> Parser<'a> {
         for element in &spec.elements {
             match element {
                 InterpolatedStringElement::Literal(lit) => {
-                    // Convert to owned String
+                    // Intern the literal string
                     let processed = lit.value.to_string();
-                    parts.push(FStringPart::Literal(processed));
+                    let string_id = self.interner.intern(&processed);
+                    parts.push(FStringPart::Literal(string_id));
                 }
                 InterpolatedStringElement::Interpolation(interp) => {
                     has_interpolation = true;
@@ -884,7 +886,13 @@ impl<'a> Parser<'a> {
             // Combine all literal parts into a single static string and parse at parse time
             let static_spec: String = parts
                 .into_iter()
-                .filter_map(|p| if let FStringPart::Literal(s) = p { Some(s) } else { None })
+                .filter_map(|p| {
+                    if let FStringPart::Literal(string_id) = p {
+                        Some(self.interner.get_str(string_id).to_owned())
+                    } else {
+                        None
+                    }
+                })
                 .collect();
             let parsed = static_spec.parse().map_err(|spec_str| {
                 ParseError::syntax(
@@ -998,7 +1006,7 @@ fn convert_conversion_flag(flag: RuffConversionFlag) -> ConversionFlag {
 /// extracting the preview line from source during traceback formatting.
 ///
 /// To display the filename, the caller must provide access to the string storage.
-#[derive(Clone, Copy, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CodeRange {
     /// Interned filename ID - look up in Interns to get the actual string.
     pub filename: StringId,
