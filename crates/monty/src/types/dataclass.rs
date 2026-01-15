@@ -41,7 +41,7 @@ use crate::{
 /// - Method calls: If the attribute name is in `methods`, triggers external call
 /// - repr: Only shows declared fields (from field_names), not extra attributes
 #[derive(Debug)]
-pub struct Dataclass {
+pub(crate) struct Dataclass {
     /// The class name (e.g., "Point", "User")
     name: String,
     /// Declared field names in definition order (for repr and hashing)
@@ -143,26 +143,6 @@ impl Dataclass {
             return Err(ExcType::frozen_instance_error(&attr_name));
         }
         self.attrs.set(name, value, heap, interns)
-    }
-
-    /// Checks if a method name is in the methods set.
-    #[must_use]
-    pub fn has_method(&self, name: &str) -> bool {
-        self.methods.contains(name)
-    }
-
-    /// Creates a deep clone of this dataclass with proper reference counting.
-    ///
-    /// The attrs Dict is cloned with proper refcount handling for all values.
-    #[must_use]
-    pub fn clone_with_heap(&self, heap: &mut Heap<impl ResourceTracker>) -> Self {
-        Self {
-            name: self.name.clone(),
-            field_names: self.field_names.clone(),
-            attrs: self.attrs.clone_with_heap(heap),
-            methods: self.methods.clone(),
-            frozen: self.frozen,
-        }
     }
 
     /// Computes the hash for this dataclass if it's frozen.

@@ -31,7 +31,7 @@ use crate::{
 /// When using `from_pairs()`, ownership is transferred without incrementing refcounts
 /// (caller must ensure values' refcounts account for the dict's reference).
 #[derive(Debug, Default)]
-pub struct Dict {
+pub(crate) struct Dict {
     /// indices mapping from the entry hash to its index.
     indices: HashTable<usize>,
     /// entries is a dense vec maintaining entry order.
@@ -323,27 +323,6 @@ impl Dict {
         self.entries.get(index).map(|e| &e.key)
     }
 
-    /// Creates a deep clone of this dict with proper reference counting.
-    ///
-    /// All heap-allocated keys and values have their reference counts
-    /// incremented. This should be used instead of `.clone()` which would
-    /// bypass reference counting.
-    #[must_use]
-    pub fn clone_with_heap(&self, heap: &mut Heap<impl ResourceTracker>) -> Self {
-        Self {
-            indices: self.indices.clone(),
-            entries: self
-                .entries
-                .iter()
-                .map(|entry| DictEntry {
-                    key: entry.key.clone_with_heap(heap),
-                    value: entry.value.clone_with_heap(heap),
-                    hash: entry.hash,
-                })
-                .collect(),
-        }
-    }
-
     /// Creates a dict from the `dict()` constructor call.
     ///
     /// - `dict()` with no args returns an empty dict
@@ -416,7 +395,7 @@ impl Dict {
 }
 
 /// Iterator over borrowed (key, value) pairs in a dict.
-pub struct DictIter<'a>(std::slice::Iter<'a, DictEntry>);
+pub(crate) struct DictIter<'a>(std::slice::Iter<'a, DictEntry>);
 
 impl<'a> Iterator for DictIter<'a> {
     type Item = (&'a Value, &'a Value);
@@ -434,7 +413,7 @@ impl<'a> IntoIterator for &'a Dict {
 }
 
 /// Iterator over owned (key, value) pairs from a consumed dict.
-pub struct DictIntoIter(std::vec::IntoIter<DictEntry>);
+pub(crate) struct DictIntoIter(std::vec::IntoIter<DictEntry>);
 
 impl Iterator for DictIntoIter {
     type Item = (Value, Value);

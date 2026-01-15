@@ -17,7 +17,7 @@ use crate::{
 /// Most Python method calls have at most 2 arguments, so this optimization
 /// eliminates the Vec heap allocation overhead for the vast majority of calls.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum ArgValues {
+pub(crate) enum ArgValues {
     Empty,
     One(Value),
     Two(Value, Value),
@@ -80,25 +80,6 @@ impl ArgValues {
             Self::Two(v1, v2) => (vec![v1, v2], KwargsValues::Empty),
             Self::Kwargs(kwargs) => (vec![], kwargs),
             Self::ArgsKargs { args, kwargs } => (args, kwargs),
-        }
-    }
-
-    /// Converts arguments into a simple Vec of positional Values.
-    ///
-    /// Note: Kwargs are extracted but not returned. The caller is responsible
-    /// for tracking that no kwargs were passed if needed.
-    pub fn into_vec(self) -> Vec<Value> {
-        match self {
-            Self::Empty => vec![],
-            Self::One(v) => vec![v],
-            Self::Two(v1, v2) => vec![v1, v2],
-            Self::Kwargs(_kwargs) => {
-                // Kwargs only - no positional args
-                // Note: kwargs values are still owned but not returned
-                // This shouldn't happen for external calls in practice
-                vec![]
-            }
-            Self::ArgsKargs { args, kwargs: _ } => args,
         }
     }
 
@@ -168,7 +149,7 @@ impl ArgValues {
 /// Used to capture both the case of inline keyword arguments `foo(foo=1, bar=2)`
 /// and the case of a dictionary passed as a single argument `foo(**kwargs)`.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub enum KwargsValues {
+pub(crate) enum KwargsValues {
     Empty,
     Inline(Vec<(StringId, Value)>),
     Dict(Dict),
@@ -251,7 +232,7 @@ impl IntoIterator for KwargsValues {
 /// Iterator over keyword argument (key, value) pairs.
 ///
 /// For `Inline` kwargs, converts `StringId` keys to `Value::InternString`.
-pub enum KwargsValuesIter {
+pub(crate) enum KwargsValuesIter {
     Empty,
     Inline(IntoIter<(StringId, Value)>),
     Dict(IntoIter<(Value, Value)>),
