@@ -216,6 +216,19 @@ pub enum Opcode {
     // === Function Calls ===
     /// Call TOS with n positional args. Operand: u8 arg_count.
     CallFunction,
+    /// Call a builtin function directly. Operands: u8 builtin_id, u8 arg_count.
+    ///
+    /// The builtin_id is the discriminant of `BuiltinsFunctions` (via `FromRepr`).
+    /// This is an optimization over `LoadConst + CallFunction` that avoids:
+    /// - Constant pool lookup
+    /// - Pushing/popping the callable on the stack
+    /// - Runtime type dispatch in call_function
+    CallBuiltinFunction,
+    /// Call a builtin type constructor directly. Operands: u8 type_id, u8 arg_count.
+    ///
+    /// The type_id is the discriminant of `BuiltinsTypes` (via `FromRepr`).
+    /// This is an optimization for type constructors like `list()`, `int()`, `str()`.
+    CallBuiltinType,
     /// Call with positional and keyword args.
     ///
     /// Operands: u8 pos_count, u8 kw_count, then kw_count u16 name indices.
@@ -226,9 +239,7 @@ pub enum Opcode {
     CallFunctionKw,
     /// Call method. Operands: u16 name_id, u8 arg_count.
     CallMethod,
-    /// External call (pauses VM). Operands: u16 func_id, u8 arg_count.
-    CallExternal,
-    /// Call with *args tuple and **kwargs dict. Operand: u8 flags.
+    /// Call a defined function with *args tuple and **kwargs dict. Operand: u8 flags.
     ///
     /// Flags:
     /// - bit 0: has kwargs dict on stack
@@ -239,7 +250,7 @@ pub enum Opcode {
     /// - kwargs dict (if flag bit 0 set)
     ///
     /// Used for calls with `*args` and/or `**kwargs` unpacking.
-    CallFunctionEx,
+    CallFunctionExtended,
 
     // === Control Flow ===
     /// Unconditional relative jump. Operand: i16 offset.
