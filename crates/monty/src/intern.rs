@@ -316,6 +316,8 @@ pub enum StaticStrings {
     Os,
     #[strum(serialize = "getenv")]
     Getenv,
+    #[strum(serialize = "environ")]
+    Environ,
     #[strum(serialize = "default")]
     Default,
 
@@ -400,6 +402,11 @@ pub enum StaticStrings {
     Rmdir,
     #[strum(serialize = "rename")]
     Rename,
+
+    // Slice attributes
+    Start,
+    Stop,
+    Step,
 }
 
 impl StaticStrings {

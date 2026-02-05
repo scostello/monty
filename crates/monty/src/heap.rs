@@ -13,7 +13,7 @@ use crate::{
     args::ArgValues,
     asyncio::{Coroutine, GatherFuture, GatherItem},
     exception_private::{ExcType, RunResult, SimpleException},
-    intern::{FunctionId, Interns},
+    intern::{FunctionId, Interns, StringId},
     resource::{ResourceError, ResourceTracker},
     types::{
         AttrCallResult, Bytes, Dataclass, Dict, FrozenSet, List, LongInt, Module, MontyIter, NamedTuple, Path, PyTrait,
@@ -566,7 +566,7 @@ impl PyTrait for HeapData {
             // LongInt returns its string representation
             Self::LongInt(li) => Cow::Owned(li.to_string()),
             // Exceptions return just the message (or empty string if no message)
-            Self::Exception(e) => Cow::Owned(e.arg().cloned().unwrap_or_default()),
+            Self::Exception(e) => Cow::Owned(e.py_str()),
             // Paths return the path string without the PosixPath() wrapper
             Self::Path(p) => Cow::Owned(p.as_str().to_owned()),
             // All other types use repr
@@ -733,6 +733,24 @@ impl PyTrait for HeapData {
             Self::Tuple(t) => t.py_setitem(key, value, heap, interns),
             Self::Dict(d) => d.py_setitem(key, value, heap, interns),
             _ => Err(ExcType::type_error_not_sub_assignment(self.py_type(heap))),
+        }
+    }
+
+    fn py_getattr(
+        &self,
+        attr_id: StringId,
+        heap: &mut Heap<impl ResourceTracker>,
+        interns: &Interns,
+    ) -> RunResult<Option<AttrCallResult>> {
+        match self {
+            Self::Dataclass(dc) => dc.py_getattr(attr_id, heap, interns),
+            Self::Module(m) => Ok(m.py_getattr(attr_id, heap, interns)),
+            Self::NamedTuple(nt) => nt.py_getattr(attr_id, heap, interns),
+            Self::Slice(s) => s.py_getattr(attr_id, heap, interns),
+            Self::Exception(exc) => exc.py_getattr(attr_id, heap, interns),
+            Self::Path(p) => p.py_getattr(attr_id, heap, interns),
+            // All other types don't support attribute access via py_getattr
+            _ => Ok(None),
         }
     }
 }

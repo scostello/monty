@@ -11,10 +11,13 @@ use crate::{
     exception_public::{MontyException, StackFrame},
     fstring::FormatError,
     heap::{Heap, HeapData},
-    intern::{Interns, StringId},
+    intern::{Interns, StaticStrings, StringId},
     parse::CodeRange,
     resource::ResourceTracker,
-    types::{PyTrait, Type, str::string_repr_fmt},
+    types::{
+        AttrCallResult, PyTrait, Str, Tuple, Type,
+        str::{StringRepr, string_repr_fmt},
+    },
     value::Value,
 };
 
@@ -328,20 +331,9 @@ impl ExcType {
     /// Creates a KeyError for a missing dict key.
     ///
     /// For string keys, uses the raw string value without extra quoting.
-    /// For other types, uses repr.
     #[must_use]
     pub(crate) fn key_error(key: &Value, heap: &Heap<impl ResourceTracker>, interns: &Interns) -> RunError {
-        let key_str = match key {
-            Value::InternString(string_id) => interns.get_str(*string_id).to_owned(),
-            Value::Ref(id) => {
-                if let HeapData::Str(s) = heap.get(*id) {
-                    s.as_str().to_owned()
-                } else {
-                    key.py_repr(heap, interns).into_owned()
-                }
-            }
-            _ => key.py_repr(heap, interns).into_owned(),
-        };
+        let key_str = key.py_str(heap, interns).into_owned();
         SimpleException::new_msg(Self::KeyError, key_str).into()
     }
 
@@ -1150,6 +1142,17 @@ impl SimpleException {
         self.arg.as_ref()
     }
 
+    /// str() for an exception
+    #[must_use]
+    pub fn py_str(&self) -> String {
+        match (self.exc_type, &self.arg) {
+            // KeyError expecificaly uses repr of the key for str(exc)
+            (ExcType::KeyError, Some(exc)) => StringRepr(exc).to_string(),
+            (_, Some(arg)) => arg.to_owned(),
+            (_, None) => String::new(),
+        }
+    }
+
     pub(crate) fn py_type(&self) -> Type {
         Type::Exception(self.exc_type)
     }
@@ -1179,6 +1182,31 @@ impl SimpleException {
             exc: self,
             frame: Some(RawStackFrame::from_position(position)),
             hide_caret: false,
+        }
+    }
+
+    /// Gets an attribute from this exception.
+    ///
+    /// Handles the `.args` attribute by allocating a tuple containing the message.
+    /// Returns `Err(AttributeError)` for all other attributes.
+    pub fn py_getattr(
+        &self,
+        attr_id: StringId,
+        heap: &mut Heap<impl ResourceTracker>,
+        _interns: &Interns,
+    ) -> RunResult<Option<AttrCallResult>> {
+        if attr_id == StaticStrings::Args {
+            // Construct tuple with 0 or 1 elements based on whether arg exists
+            let elements = if let Some(arg_str) = &self.arg {
+                let str_id = heap.allocate(HeapData::Str(Str::from(arg_str.clone())))?;
+                vec![Value::Ref(str_id)]
+            } else {
+                vec![]
+            };
+            let tuple_id = heap.allocate(HeapData::Tuple(Tuple::new(elements)))?;
+            Ok(Some(AttrCallResult::Value(Value::Ref(tuple_id))))
+        } else {
+            Ok(None)
         }
     }
 }
